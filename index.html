@@ -189,6 +189,89 @@
             { rateKey: "hvac_diffuser_replace",      quantityFormula: "diffuserCount", condition: "diffuserCount > 0" },
           ],
         },
+        // ---- ALLOWANCES GROUP ----
+        {
+          id: "allowance_appliances", name: "Appliances", group: "Allowances",
+          inputs: [
+            { key: "quantity",     label: "Quantity",                  type: "number", required: true,  default: 1 },
+            { key: "materialCost", label: "Appliance Cost / Unit ($)", type: "number", required: true },
+            { key: "installCost",  label: "Install Cost / Unit ($)",   type: "number", required: false, default: 0 },
+          ],
+          lineItems: [
+            { customItem: { label: "Appliance Allowance",    unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
+            { customItem: { label: "Appliance Installation", unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
+          ],
+        },
+        {
+          id: "allowance_windows", name: "Windows", group: "Allowances",
+          inputs: [
+            { key: "quantity",     label: "Quantity",                type: "number", required: true,  default: 1 },
+            { key: "materialCost", label: "Window Cost / Unit ($)",  type: "number", required: true },
+            { key: "installCost",  label: "Install Cost / Unit ($)", type: "number", required: false, default: 0 },
+          ],
+          lineItems: [
+            { customItem: { label: "Window Allowance",    unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
+            { customItem: { label: "Window Installation", unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
+          ],
+        },
+        {
+          id: "allowance_doors", name: "Doors & Hardware", group: "Allowances",
+          inputs: [
+            { key: "quantity",     label: "Quantity",               type: "number", required: true,  default: 1 },
+            { key: "materialCost", label: "Door Cost / Unit ($)",   type: "number", required: true },
+            { key: "installCost",  label: "Install Cost / Unit ($)",type: "number", required: false, default: 0 },
+          ],
+          lineItems: [
+            { customItem: { label: "Door & Hardware Allowance",    unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
+            { customItem: { label: "Door & Hardware Installation", unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
+          ],
+        },
+        {
+          id: "allowance_plumbing", name: "Plumbing Fixtures", group: "Allowances",
+          inputs: [
+            { key: "quantity",     label: "Quantity",                   type: "number", required: true,  default: 1 },
+            { key: "materialCost", label: "Fixture Cost / Unit ($)",    type: "number", required: true },
+            { key: "installCost",  label: "Install Cost / Unit ($)",    type: "number", required: false, default: 0 },
+          ],
+          lineItems: [
+            { customItem: { label: "Plumbing Fixture Allowance",    unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
+            { customItem: { label: "Plumbing Fixture Installation", unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
+          ],
+        },
+        {
+          id: "allowance_lighting", name: "Lighting & Fixtures", group: "Allowances",
+          inputs: [
+            { key: "quantity",     label: "Quantity",                   type: "number", required: true,  default: 1 },
+            { key: "materialCost", label: "Fixture Cost / Unit ($)",    type: "number", required: true },
+            { key: "installCost",  label: "Install Cost / Unit ($)",    type: "number", required: false, default: 0 },
+          ],
+          lineItems: [
+            { customItem: { label: "Lighting Fixture Allowance",    unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
+            { customItem: { label: "Lighting Fixture Installation", unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
+          ],
+        },
+        {
+          id: "allowance_countertops", name: "Countertops", group: "Allowances",
+          inputs: [
+            { key: "squareFeet",   label: "Square Feet",             type: "number", required: true },
+            { key: "materialCost", label: "Material Cost / SF ($)",  type: "number", required: true },
+            { key: "installCost",  label: "Install Cost / SF ($)",   type: "number", required: false, default: 0 },
+          ],
+          lineItems: [
+            { customItem: { label: "Countertop Material",    unit: "SF", category: "Allowances" }, quantityFormula: "squareFeet", unitCostFormula: "materialCost" },
+            { customItem: { label: "Countertop Installation",unit: "SF", category: "Allowances" }, quantityFormula: "squareFeet", unitCostFormula: "installCost",  condition: "installCost > 0" },
+          ],
+        },
+        {
+          id: "allowance_general", name: "General Allowance", group: "Allowances",
+          inputs: [
+            { key: "description",  label: "Description",             type: "text",   required: false },
+            { key: "totalCost",    label: "Total Allowance ($)",     type: "number", required: true },
+          ],
+          lineItems: [
+            { customItem: { label: "General Allowance", unit: "LS", category: "Allowances" }, quantityFormula: "1", unitCostFormula: "totalCost" },
+          ],
+        },
       ],
       defaults: { pricingTier: "mid", salesTaxPct: 0.0, contingencyPct: 0.1, overheadPct: 0.1, profitPct: 0.1 },
     };
@@ -253,7 +336,7 @@
     // =========================================================================
     // STORAGE
     // =========================================================================
-    const SK = "tradescope_v1";
+    const SK = "tradescope_v2";
     const load = () => { try { const r = localStorage.getItem(SK); return r ? JSON.parse(r) : null; } catch(e) { return null; } };
     const save = d => { try { localStorage.setItem(SK, JSON.stringify(d)); } catch(e) {} };
 
@@ -266,8 +349,10 @@
     let _id = Date.now(); const uid = () => `ts_${_id++}`;
 
     const OPTION_LABELS = { lvp:"LVP (Luxury Vinyl Plank)", hardwood:"Hardwood", tile:"Tile", none:"None", light:"Light", moderate:"Moderate", heavy:"Heavy", standard:"Standard TI", selective:"Selective", basic:"Basic Painted Base Cabinetry", service_counter:"Retail Service Counter", midgrade_casework:"Mid-Grade Laminate Casework", premium_custom:"Premium Custom Millwork" };
-    const GROUPS = ["Structural","Finishes","Demo","Ceilings","MEP","Specialties"];
-    const GROUP_COLOR = { Structural:"bg-slate-100 text-slate-700", Finishes:"bg-emerald-50 text-emerald-700", Demo:"bg-red-50 text-red-700", Ceilings:"bg-sky-50 text-sky-700", MEP:"bg-amber-50 text-amber-700", Specialties:"bg-purple-50 text-purple-700" };
+    const GROUPS = ["Structural","Finishes","Demo","Ceilings","MEP","Specialties","Allowances"];
+    const GROUP_COLOR = { Structural:"bg-slate-100 text-slate-700", Finishes:"bg-emerald-50 text-emerald-700", Demo:"bg-red-50 text-red-700", Ceilings:"bg-sky-50 text-sky-700", MEP:"bg-amber-50 text-amber-700", Specialties:"bg-purple-50 text-purple-700", Allowances:"bg-rose-50 text-rose-700" };
+
+    const PURCHASE_CATS = ["Appliances","Windows","Doors & Hardware","Plumbing Fixtures","Lighting & Fixtures","Countertops","Flooring","Tile","Drywall","Framing","Paint","Demo","HVAC","Electrical","Millwork","Restroom","Ceilings","Insulation","Other"];
 
     // =========================================================================
     // ICONS (inline SVG — no external dependency)
@@ -287,6 +372,8 @@
     const IconBuilding  = ({c}) => <Svg className={c||"w-6 h-6"}   d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>;
     const IconAlert     = ({c}) => <Svg className={c||"w-4 h-4"}   d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>;
     const IconReset     = ({c}) => <Svg className={c||"w-3 h-3"}   d="M3 10a9 9 0 019-9m0 0v4m0-4L9 4m3-3l3 3m6 5a9 9 0 01-9 9m0 0v-4m0 4l-3-3m3 3l3-3"/>;
+    const IconTracker   = ({c}) => <Svg className={c||"w-4 h-4"}   d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>;
+    const IconEstimate  = ({c}) => <Svg className={c||"w-4 h-4"}   d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>;
 
     // =========================================================================
     // COMPONENTS
@@ -384,6 +471,10 @@
                         className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
                       {inp.type==="percent" && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>}
                     </div>
+                  )}
+                  {inp.type==="text" && (
+                    <input type="text" value={vals[inp.key]} onChange={e => set(inp.key, e.target.value)}
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
                   )}
                   {inp.type==="boolean" && (
                     <button type="button" onClick={() => set(inp.key,!vals[inp.key])}
@@ -629,6 +720,216 @@
     }
 
     // =========================================================================
+    // TRACKER MODULE
+    // =========================================================================
+    function TrackerView({ instances, tier, rateOverrides, settings, purchases, onAddPurchase, onDeletePurchase }) {
+      const [form, setForm] = useState({ vendor:"", description:"", category: PURCHASE_CATS[0], amount:"", date: new Date().toISOString().split("T")[0], notes:"" });
+      const [showForm, setShowForm] = useState(false);
+
+      // Compute budget total (direct costs only, no markup, for budget comparison)
+      const budgetTotal = useMemo(() => {
+        return instances.flatMap(inst => {
+          const def = DB.assemblies.find(a => a.id===inst.assemblyId); if(!def) return [];
+          return computeLineItems(def, inst.inputs, tier, rateOverrides);
+        }).reduce((s,i)=>s+i.total, 0);
+      }, [instances, tier, rateOverrides]);
+
+      const totalSpent = purchases.reduce((s,p)=>s+p.amount, 0);
+      const remaining = budgetTotal - totalSpent;
+      const pct = budgetTotal > 0 ? Math.min(100, (totalSpent/budgetTotal)*100) : 0;
+
+      // Category rollup
+      const budgetByCat = useMemo(() => {
+        const out = {};
+        instances.flatMap(inst => {
+          const def = DB.assemblies.find(a=>a.id===inst.assemblyId); if(!def) return [];
+          return computeLineItems(def, inst.inputs, tier, rateOverrides);
+        }).forEach(item => { out[item.category]=(out[item.category]||0)+item.total; });
+        return out;
+      }, [instances, tier, rateOverrides]);
+
+      const spentByCat = {};
+      purchases.forEach(p => { spentByCat[p.category]=(spentByCat[p.category]||0)+p.amount; });
+
+      const allCats = Array.from(new Set([...Object.keys(budgetByCat), ...Object.keys(spentByCat)])).sort();
+
+      const handleAdd = e => {
+        e.preventDefault();
+        const amt = parseFloat(form.amount);
+        if(!amt || amt<=0) return;
+        onAddPurchase({ id:uid(), vendor:form.vendor, description:form.description, category:form.category, amount:amt, date:form.date, notes:form.notes });
+        setForm({ vendor:"", description:"", category:PURCHASE_CATS[0], amount:"", date: new Date().toISOString().split("T")[0], notes:"" });
+        setShowForm(false);
+      };
+
+      const statusColor = pct < 75 ? "bg-emerald-500" : pct < 95 ? "bg-amber-500" : "bg-red-500";
+
+      return (
+        <div className="flex-1 overflow-y-auto p-5 space-y-5">
+          {/* Stats row */}
+          <div className="grid grid-cols-3 gap-4">
+            <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Budget (Direct)</p>
+              <p className="text-xl font-black text-gray-900 tabular-nums">{fmtUSD(budgetTotal)}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{instances.length} assembl{instances.length===1?"y":"ies"}</p>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Spent</p>
+              <p className={`text-xl font-black tabular-nums ${pct>=100?"text-red-600":"text-gray-900"}`}>{fmtUSD(totalSpent)}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{purchases.length} purchase{purchases.length===1?"":"s"}</p>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Remaining</p>
+              <p className={`text-xl font-black tabular-nums ${remaining<0?"text-red-600":"text-emerald-600"}`}>{fmtUSD(remaining)}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{pct.toFixed(0)}% used</p>
+            </div>
+          </div>
+
+          {/* Progress bar */}
+          <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+            <div className="flex justify-between text-xs text-gray-500 mb-2">
+              <span>Budget utilization</span>
+              <span className="font-semibold tabular-nums">{pct.toFixed(1)}%</span>
+            </div>
+            <div className="w-full bg-gray-100 rounded-full h-3">
+              <div className={`h-3 rounded-full transition-all ${statusColor}`} style={{width:`${pct}%`}}/>
+            </div>
+          </div>
+
+          {/* Category breakdown table */}
+          {allCats.length > 0 && (
+            <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+              <div className="px-4 py-3 border-b border-gray-100">
+                <p className="text-sm font-bold text-gray-900">Budget vs Actual by Category</p>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead><tr className="border-b border-gray-100 bg-gray-50">
+                    <th className="py-2 pl-4 pr-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Category</th>
+                    <th className="py-2 px-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Budget</th>
+                    <th className="py-2 px-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Actual</th>
+                    <th className="py-2 pl-3 pr-4 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Variance</th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {allCats.map(cat => {
+                      const b = budgetByCat[cat]||0;
+                      const a = spentByCat[cat]||0;
+                      const v = b - a;
+                      return (
+                        <tr key={cat} className="hover:bg-gray-50/80">
+                          <td className="py-2 pl-4 pr-3 text-sm text-gray-700 font-medium">{cat}</td>
+                          <td className="py-2 px-3 text-sm text-right text-gray-500 tabular-nums">{b>0?fmtUSD(b):"—"}</td>
+                          <td className="py-2 px-3 text-sm text-right text-gray-500 tabular-nums">{a>0?fmtUSD(a):"—"}</td>
+                          <td className={`py-2 pl-3 pr-4 text-sm text-right font-semibold tabular-nums ${v<0?"text-red-600":v>0?"text-emerald-600":"text-gray-400"}`}>
+                            {b>0||a>0 ? (v>=0?"+":"")+fmtUSD(v) : "—"}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Log a purchase */}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+              <p className="text-sm font-bold text-gray-900">Purchase Log</p>
+              <button onClick={()=>setShowForm(f=>!f)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs font-semibold rounded-lg hover:bg-blue-700 transition-colors">
+                <IconPlus c="w-3 h-3"/> Log Purchase
+              </button>
+            </div>
+
+            {showForm && (
+              <form onSubmit={handleAdd} className="px-4 py-4 border-b border-gray-100 bg-gray-50 grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Vendor</label>
+                  <input type="text" value={form.vendor} onChange={e=>setForm(f=>({...f,vendor:e.target.value}))} placeholder="Home Depot, etc."
+                    className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Description</label>
+                  <input type="text" value={form.description} onChange={e=>setForm(f=>({...f,description:e.target.value}))} placeholder="What was purchased"
+                    className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Category</label>
+                  <select value={form.category} onChange={e=>setForm(f=>({...f,category:e.target.value}))}
+                    className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    {PURCHASE_CATS.map(c=><option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Amount ($) <span className="text-red-400">*</span></label>
+                  <input type="number" step="0.01" min="0" required value={form.amount} onChange={e=>setForm(f=>({...f,amount:e.target.value}))} placeholder="0.00"
+                    className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Date</label>
+                  <input type="date" value={form.date} onChange={e=>setForm(f=>({...f,date:e.target.value}))}
+                    className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 mb-1">Notes</label>
+                  <input type="text" value={form.notes} onChange={e=>setForm(f=>({...f,notes:e.target.value}))} placeholder="Optional"
+                    className="w-full px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+                </div>
+                <div className="col-span-2 flex gap-2 pt-1">
+                  <button type="button" onClick={()=>setShowForm(false)} className="flex-1 px-3 py-2 text-sm font-medium text-gray-700 border border-gray-300 rounded-lg hover:bg-white">Cancel</button>
+                  <button type="submit" className="flex-1 px-3 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700">Add Purchase</button>
+                </div>
+              </form>
+            )}
+
+            {purchases.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-10 text-center px-4">
+                <IconTracker c="w-8 h-8 text-gray-200 mb-2"/>
+                <p className="text-sm text-gray-400">No purchases logged yet.</p>
+                <p className="text-xs text-gray-300 mt-1">Click "Log Purchase" to start tracking actuals.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead><tr className="border-b border-gray-100 bg-gray-50">
+                    <th className="py-2 pl-4 pr-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Date</th>
+                    <th className="py-2 px-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Vendor / Description</th>
+                    <th className="py-2 px-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Category</th>
+                    <th className="py-2 px-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Amount</th>
+                    <th className="py-2 pl-3 pr-4 text-[11px] font-semibold text-gray-400 uppercase tracking-wider w-8"></th>
+                  </tr></thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {purchases.slice().sort((a,b)=>b.date.localeCompare(a.date)).map(p=>(
+                      <tr key={p.id} className="hover:bg-gray-50/80 group">
+                        <td className="py-2 pl-4 pr-3 text-xs text-gray-400 tabular-nums whitespace-nowrap">{p.date}</td>
+                        <td className="py-2 px-3 text-sm">
+                          <span className="text-gray-800 font-medium">{p.vendor||"—"}</span>
+                          {p.description && <span className="block text-xs text-gray-400">{p.description}</span>}
+                          {p.notes && <span className="block text-xs text-gray-300 italic">{p.notes}</span>}
+                        </td>
+                        <td className="py-2 px-3 text-xs text-gray-500">{p.category}</td>
+                        <td className="py-2 px-3 text-sm text-right font-semibold text-gray-800 tabular-nums">{fmtUSD2(p.amount)}</td>
+                        <td className="py-2 pl-3 pr-4">
+                          <button onClick={()=>onDeletePurchase(p.id)} className="opacity-0 group-hover:opacity-100 p-1 text-gray-300 hover:text-red-500 transition-all" title="Delete"><IconTrash c="w-3.5 h-3.5"/></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot><tr className="border-t-2 border-gray-200 bg-gray-50">
+                    <td colSpan={3} className="py-2.5 pl-4 text-xs font-semibold text-gray-500 uppercase tracking-wider">Total Spent</td>
+                    <td className="py-2.5 px-3 text-sm font-black text-gray-900 text-right tabular-nums">{fmtUSD2(totalSpent)}</td>
+                    <td></td>
+                  </tr></tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
     // MAIN APP
     // =========================================================================
     const DEFAULT_SETTINGS = { projectName:"New Estimate", pricingTier:"mid", salesTaxPct:0, contingencyPct:0.1, overheadPct:0.1, profitPct:0.1 };
@@ -638,18 +939,22 @@
       const [settings,    setSettings]    = useState(saved?.settings    ?? {...DEFAULT_SETTINGS});
       const [instances,   setInstances]   = useState(saved?.instances   ?? []);
       const [rateOverrides, setRateOverrides] = useState(saved?.rateOverrides ?? {});
+      const [purchases,   setPurchases]   = useState(saved?.purchases   ?? []);
       const [addingDef,   setAddingDef]   = useState(null);
       const [editingPair, setEditingPair] = useState(null);
       const [showSettings,setShowSettings]= useState(false);
       const [editingName, setEditingName] = useState(false);
+      const [activeView,  setActiveView]  = useState("estimate"); // "estimate" | "tracker"
 
-      useEffect(() => { save({ settings, instances, rateOverrides }); }, [settings, instances, rateOverrides]);
+      useEffect(() => { save({ settings, instances, rateOverrides, purchases }); }, [settings, instances, rateOverrides, purchases]);
 
       const addAssembly = (def, inputs) => { setInstances(p=>[...p,{id:uid(),assemblyId:def.id,inputs}]); setAddingDef(null); };
       const updateAssembly = (id, inputs) => { setInstances(p=>p.map(i=>i.id===id?{...i,inputs}:i)); setEditingPair(null); };
       const removeAssembly = id => setInstances(p=>p.filter(i=>i.id!==id));
       const setOverride = (k,v) => setRateOverrides(p=>({...p,[k]:v}));
       const resetOverride = k => setRateOverrides(p=>{ const n={...p}; delete n[k]; return n; });
+      const addPurchase = p => setPurchases(prev=>[...prev,p]);
+      const deletePurchase = id => setPurchases(prev=>prev.filter(p=>p.id!==id));
       const tier = settings.pricingTier;
 
       return (
@@ -675,44 +980,69 @@
               </button>
             )}
             <div className="flex-1"/>
-            {instances.length>0 && <>
-              <span className="text-xs text-gray-500 hidden sm:block">{instances.length} assembl{instances.length===1?"y":"ies"}</span>
-              <button onClick={()=>{ if(confirm("Clear all assemblies?")){ setInstances([]); setRateOverrides({}); }}} className="text-xs text-gray-500 hover:text-red-400 px-2 py-1 rounded hidden sm:block">Clear</button>
+
+            {/* View toggle */}
+            <div className="flex rounded-lg overflow-hidden border border-gray-600">
+              <button onClick={()=>setActiveView("estimate")}
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold transition-colors ${activeView==="estimate"?"bg-blue-600 text-white":"bg-gray-800 text-gray-400 hover:bg-gray-700"}`}>
+                <IconEstimate c="w-3.5 h-3.5"/> Estimate
+              </button>
+              <button onClick={()=>setActiveView("tracker")}
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold transition-colors ${activeView==="tracker"?"bg-blue-600 text-white":"bg-gray-800 text-gray-400 hover:bg-gray-700"}`}>
+                <IconTracker c="w-3.5 h-3.5"/> Tracker {purchases.length>0&&<span className="bg-blue-500 text-white rounded-full px-1.5 py-0.5 text-[10px] ml-0.5">{purchases.length}</span>}
+              </button>
+            </div>
+
+            {activeView==="estimate" && <>
+              <div className="h-4 w-px bg-gray-700"/>
+              {instances.length>0 && <>
+                <span className="text-xs text-gray-500 hidden sm:block">{instances.length} assembl{instances.length===1?"y":"ies"}</span>
+                <button onClick={()=>{ if(confirm("Clear all assemblies?")){ setInstances([]); setRateOverrides({}); }}} className="text-xs text-gray-500 hover:text-red-400 px-2 py-1 rounded hidden sm:block">Clear</button>
+              </>}
+              <div className="h-4 w-px bg-gray-700"/>
+              <TierSelector tier={tier} onChange={t=>setSettings(s=>({...s,pricingTier:t}))}/>
             </>}
-            <div className="h-4 w-px bg-gray-700"/>
-            <TierSelector tier={tier} onChange={t=>setSettings(s=>({...s,pricingTier:t}))}/>
           </header>
 
-          {/* 3-column layout */}
-          <div className="flex flex-1 overflow-hidden">
-            <div className="w-48 flex-shrink-0"><AssemblyPalette onAdd={setAddingDef}/></div>
-            <div className="flex-1 overflow-y-auto">
-              {instances.length===0 ? (
-                <div className="flex flex-col items-center justify-center h-full text-center px-8 pb-16">
-                  <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mb-4">
-                    <IconBuilding c="w-8 h-8 text-gray-300"/>
+          {activeView === "estimate" ? (
+            /* 3-column layout */
+            <div className="flex flex-1 overflow-hidden">
+              <div className="w-48 flex-shrink-0"><AssemblyPalette onAdd={setAddingDef}/></div>
+              <div className="flex-1 overflow-y-auto">
+                {instances.length===0 ? (
+                  <div className="flex flex-col items-center justify-center h-full text-center px-8 pb-16">
+                    <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mb-4">
+                      <IconBuilding c="w-8 h-8 text-gray-300"/>
+                    </div>
+                    <h3 className="text-lg font-bold text-gray-400 mb-1">No assemblies yet</h3>
+                    <p className="text-sm text-gray-400 max-w-xs">Select an assembly from the left panel to start building your estimate.</p>
+                    <div className="mt-6 flex items-center gap-2 text-xs text-gray-400 bg-gray-100 px-3 py-2 rounded-lg">
+                      <IconAlert/> All costs driven by the JSON rate database — no hardcoded values.
+                    </div>
                   </div>
-                  <h3 className="text-lg font-bold text-gray-400 mb-1">No assemblies yet</h3>
-                  <p className="text-sm text-gray-400 max-w-xs">Select an assembly from the left panel to start building your estimate.</p>
-                  <div className="mt-6 flex items-center gap-2 text-xs text-gray-400 bg-gray-100 px-3 py-2 rounded-lg">
-                    <IconAlert/> All costs driven by the JSON rate database — no hardcoded values.
+                ) : (
+                  <div className="p-4 space-y-3 max-w-3xl">
+                    {instances.map(inst => {
+                      const def = DB.assemblies.find(a=>a.id===inst.assemblyId); if(!def) return null;
+                      return <AssemblyCard key={inst.id} instance={inst} asmDef={def} tier={tier} rateOverrides={rateOverrides}
+                        onEdit={inst=>setEditingPair({instance:inst,def})} onRemove={removeAssembly}
+                        onRateOverride={setOverride} onResetRateOverride={resetOverride}/>;
+                    })}
                   </div>
-                </div>
-              ) : (
-                <div className="p-4 space-y-3 max-w-3xl">
-                  {instances.map(inst => {
-                    const def = DB.assemblies.find(a=>a.id===inst.assemblyId); if(!def) return null;
-                    return <AssemblyCard key={inst.id} instance={inst} asmDef={def} tier={tier} rateOverrides={rateOverrides}
-                      onEdit={inst=>setEditingPair({instance:inst,def})} onRemove={removeAssembly}
-                      onRateOverride={setOverride} onResetRateOverride={resetOverride}/>;
-                  })}
-                </div>
-              )}
+                )}
+              </div>
+              <div className="w-60 flex-shrink-0">
+                <SummaryPanel instances={instances} tier={tier} rateOverrides={rateOverrides} settings={settings} onSettingsOpen={()=>setShowSettings(true)}/>
+              </div>
             </div>
-            <div className="w-60 flex-shrink-0">
-              <SummaryPanel instances={instances} tier={tier} rateOverrides={rateOverrides} settings={settings} onSettingsOpen={()=>setShowSettings(true)}/>
+          ) : (
+            /* Tracker view */
+            <div className="flex flex-1 overflow-hidden">
+              <TrackerView
+                instances={instances} tier={tier} rateOverrides={rateOverrides} settings={settings}
+                purchases={purchases} onAddPurchase={addPurchase} onDeletePurchase={deletePurchase}/>
             </div>
-          </div>
+          )}
 
           {addingDef && <AssemblyFormModal asmDef={addingDef} initialInputs={null} onSave={inputs=>addAssembly(addingDef,inputs)} onClose={()=>setAddingDef(null)}/>}
           {editingPair && <AssemblyFormModal asmDef={editingPair.def} initialInputs={editingPair.instance.inputs} onSave={inputs=>updateAssembly(editingPair.instance.id,inputs)} onClose={()=>setEditingPair(null)}/>}
