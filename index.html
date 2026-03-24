@@ -731,44 +731,43 @@
     function CatTable({ title, rows, spentByCat, catProgress, onProgressChange }) {
       if (rows.length === 0) return null;
       return (
-        <div className="overflow-hidden">
-          <div className="px-4 py-2 bg-gray-100 border-b border-gray-200">
-            <p className="text-[11px] font-bold uppercase tracking-widest text-gray-500">{title}</p>
-          </div>
-          <tbody className="divide-y divide-gray-50">
-            {rows.map(({ cat, budget }) => {
-              const actual = spentByCat[cat] || 0;
-              const rawPct = catProgress[cat] !== undefined ? catProgress[cat] : 0;
-              const pctDone = Math.min(100, Math.max(0, rawPct));
-              // Projected: at 100% done → actual; at 0% or no actual → budget; else extrapolate
-              let projected;
-              if (pctDone >= 100) projected = actual;
-              else if (pctDone === 0 || actual === 0) projected = budget;
-              else projected = actual / (pctDone / 100);
-              const variance = budget - projected;
-              return (
-                <tr key={cat} className="hover:bg-gray-50/60 group">
-                  <td className="py-2.5 pl-4 pr-3 text-sm text-gray-700 font-medium">{cat}</td>
-                  <td className="py-2.5 px-3 text-sm text-right text-gray-500 tabular-nums">{budget > 0 ? fmtUSD(budget) : "—"}</td>
-                  <td className="py-2.5 px-3 text-sm text-right text-gray-500 tabular-nums">{actual > 0 ? fmtUSD(actual) : "—"}</td>
-                  <td className="py-2.5 px-3">
-                    <div className="flex items-center justify-end gap-1">
-                      <input type="number" min="0" max="100" step="1" value={rawPct||""}
-                        onChange={e => onProgressChange(cat, Math.min(100, Math.max(0, parseInt(e.target.value)||0)))}
-                        placeholder="0"
-                        className="w-14 px-1.5 py-0.5 text-right border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 tabular-nums"/>
-                      <span className="text-gray-400 text-xs">%</span>
-                    </div>
-                  </td>
-                  <td className="py-2.5 px-3 text-sm text-right tabular-nums font-medium text-gray-600">{fmtUSD(Math.round(projected))}</td>
-                  <td className={`py-2.5 pl-3 pr-4 text-sm text-right font-semibold tabular-nums ${variance < 0 ? "text-red-600" : variance > 0 ? "text-emerald-600" : "text-gray-400"}`}>
-                    {budget > 0 || actual > 0 ? (variance >= 0 ? "+" : "") + fmtUSD(Math.round(variance)) : "—"}
-                  </td>
+        <tbody>
+          <tr className="bg-gray-100 border-y border-gray-200">
+            <td colSpan={6} className="px-4 py-2">
+              <p className="text-[11px] font-bold uppercase tracking-widest text-gray-500">{title}</p>
+            </td>
+          </tr>
+          {rows.map(({ cat, budget }) => {
+            const actual = spentByCat[cat] || 0;
+            const rawPct = catProgress[cat] !== undefined ? catProgress[cat] : 0;
+            const pctDone = Math.min(100, Math.max(0, rawPct));
+            let projected;
+            if (pctDone >= 100) projected = actual;
+            else if (pctDone === 0 || actual === 0) projected = budget;
+            else projected = actual / (pctDone / 100);
+            const variance = budget - projected;
+            return (
+              <tr key={cat} className="hover:bg-gray-50/60 group border-b border-gray-50">
+                <td className="py-2.5 pl-4 pr-3 text-sm text-gray-700 font-medium">{cat}</td>
+                <td className="py-2.5 px-3 text-sm text-right text-gray-500 tabular-nums">{budget > 0 ? fmtUSD(budget) : "—"}</td>
+                <td className="py-2.5 px-3 text-sm text-right text-gray-500 tabular-nums">{actual > 0 ? fmtUSD(actual) : "—"}</td>
+                <td className="py-2.5 px-3">
+                  <div className="flex items-center justify-end gap-1">
+                    <input type="number" min="0" max="100" step="1" value={rawPct||""}
+                      onChange={e => onProgressChange(cat, Math.min(100, Math.max(0, parseInt(e.target.value)||0)))}
+                      placeholder="0"
+                      className="w-14 px-1.5 py-0.5 text-right border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 tabular-nums"/>
+                    <span className="text-gray-400 text-xs">%</span>
+                  </div>
+                </td>
+                <td className="py-2.5 px-3 text-sm text-right tabular-nums font-medium text-gray-600">{fmtUSD(Math.round(projected))}</td>
+                <td className={`py-2.5 pl-3 pr-4 text-sm text-right font-semibold tabular-nums ${variance < 0 ? "text-red-600" : variance > 0 ? "text-emerald-600" : "text-gray-400"}`}>
+                  {budget > 0 || actual > 0 ? (variance >= 0 ? "+" : "") + fmtUSD(Math.round(variance)) : "—"}
+                </td>
                 </tr>
               );
             })}
-          </tbody>
-        </div>
+        </tbody>
       );
     }
 
