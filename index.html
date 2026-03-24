@@ -1,13 +1,727 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>TradeScope — Construction Estimator</title>
-    <meta name="description" content="Assembly-driven construction estimating for San Diego retail TI and light residential work." />
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TradeScope — Construction Estimator</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html, body, #root { height: 100%; margin: 0; padding: 0; }
+    * { box-sizing: border-box; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    const { useState, useEffect, useMemo } = React;
+
+    // =========================================================================
+    // DATABASE — single source of truth (tradescope_seed_database_v2.json)
+    // =========================================================================
+    const DB = {
+      rates: {
+        framing_interior_wall:               { label: "Interior Non-Load Bearing Wall",           unit: "LF", category: "Framing",          low: 45,    mid: 60,    high: 75    },
+        drywall_hang_tape_finish:            { label: "Drywall Hang + Tape + Finish",              unit: "SF", category: "Drywall",          low: 2.5,   mid: 3.5,   high: 4.5   },
+        drywall_level5_add:                  { label: "Drywall Level 5 Add",                       unit: "SF", category: "Drywall",          low: 0.75,  mid: 1.0,   high: 1.5   },
+        insulation_batt:                     { label: "Batt Insulation",                           unit: "SF", category: "Insulation",       low: 1.5,   mid: 2.25,  high: 3.0   },
+        paint_walls:                         { label: "Wall Paint",                                unit: "SF", category: "Paint",            low: 1.5,   mid: 2.25,  high: 3.5   },
+        floor_install_lvp:                   { label: "LVP Install",                               unit: "SF", category: "Flooring",         low: 3.0,   mid: 4.5,   high: 6.0   },
+        floor_install_hardwood:              { label: "Hardwood Install",                          unit: "SF", category: "Flooring",         low: 8.0,   mid: 11.0,  high: 15.0  },
+        tile_install_standard:               { label: "Tile Install Standard",                     unit: "SF", category: "Tile",             low: 10.0,  mid: 15.0,  high: 25.0  },
+        demo_light:                          { label: "Light Interior Demo",                       unit: "SF", category: "Demo",             low: 3.0,   mid: 5.0,   high: 8.0   },
+        demo_selective:                      { label: "Selective Interior Demo",                   unit: "SF", category: "Demo",             low: 6.0,   mid: 9.0,   high: 14.0  },
+        demo_heavy:                          { label: "Heavy Interior Demo",                       unit: "SF", category: "Demo",             low: 10.0,  mid: 15.0,  high: 24.0  },
+        demo_wall:                           { label: "Wall Demo",                                 unit: "LF", category: "Demo",             low: 20.0,  mid: 35.0,  high: 50.0  },
+        door_prehung_install:                { label: "Prehung Door Install",                      unit: "EA", category: "Doors",            low: 250,   mid: 400,   high: 600   },
+        baseboard_install:                   { label: "Baseboard Install",                         unit: "LF", category: "Finish Carpentry", low: 8.0,   mid: 12.0,  high: 18.0  },
+        act_refresh_tile_replace:            { label: "ACT Tile Replacement Refresh",              unit: "SF", category: "Ceilings",         low: 3.0,   mid: 4.5,   high: 7.0   },
+        act_refresh_grid_touchup:            { label: "ACT Grid Touch-Up / Minor Repair",          unit: "SF", category: "Ceilings",         low: 0.75,  mid: 1.25,  high: 2.0   },
+        act_refresh_grid_replace_allowance:  { label: "ACT Grid Replacement Allowance",            unit: "SF", category: "Ceilings",         low: 2.0,   mid: 3.5,   high: 5.5   },
+        electrical_rough_sf_light:           { label: "Electrical Rough — Light Refresh",          unit: "SF", category: "Electrical",       low: 3.0,   mid: 4.5,   high: 6.5   },
+        electrical_rough_sf_standard:        { label: "Electrical Rough — Standard TI",            unit: "SF", category: "Electrical",       low: 6.0,   mid: 9.0,   high: 13.0  },
+        electrical_rough_sf_heavy:           { label: "Electrical Rough — Heavy TI",               unit: "SF", category: "Electrical",       low: 10.0,  mid: 14.0,  high: 20.0  },
+        electrical_panel_allowance:          { label: "Panel / Circuit Expansion Allowance",       unit: "EA", category: "Electrical",       low: 1500,  mid: 3000,  high: 6000  },
+        restroom_refresh_allowance:          { label: "Restroom Refresh Allowance",                unit: "EA", category: "Restroom",         low: 4500,  mid: 8500,  high: 15000 },
+        restroom_fixture_allowance:          { label: "Restroom Fixture Allowance",                unit: "EA", category: "Restroom",         low: 1200,  mid: 2500,  high: 5000  },
+        restroom_accessories_allowance:      { label: "Restroom Accessories Allowance",            unit: "EA", category: "Restroom",         low: 400,   mid: 900,   high: 1800  },
+        restroom_tile_refresh_allowance:     { label: "Restroom Tile Refresh Allowance",           unit: "EA", category: "Restroom",         low: 800,   mid: 1800,  high: 3500  },
+        restroom_paint_allowance:            { label: "Restroom Paint Allowance",                  unit: "EA", category: "Restroom",         low: 350,   mid: 750,   high: 1500  },
+        millwork_allowance_basic:            { label: "Millwork — Basic Painted Base Cabinetry",   unit: "LF", category: "Millwork",         low: 250,   mid: 400,   high: 650   },
+        millwork_allowance_service_counter:  { label: "Millwork — Retail Service Counter",         unit: "LF", category: "Millwork",         low: 500,   mid: 800,   high: 1300  },
+        millwork_allowance_midgrade_casework:{ label: "Millwork — Mid-Grade Laminate Casework",    unit: "LF", category: "Millwork",         low: 350,   mid: 550,   high: 900   },
+        millwork_allowance_premium_custom:   { label: "Millwork — Premium Custom",                 unit: "LF", category: "Millwork",         low: 800,   mid: 1200,  high: 2000  },
+        hvac_refresh_light:                  { label: "HVAC Refresh / Light Update",               unit: "SF", category: "HVAC",             low: 2.0,   mid: 3.5,   high: 5.5   },
+        hvac_update_moderate:                { label: "HVAC Moderate Update",                      unit: "SF", category: "HVAC",             low: 4.0,   mid: 6.5,   high: 9.5   },
+        hvac_update_heavy:                   { label: "HVAC Heavy Update",                         unit: "SF", category: "HVAC",             low: 7.0,   mid: 11.0,  high: 16.0  },
+        hvac_diffuser_replace:               { label: "HVAC Diffuser / Register Replacement",      unit: "EA", category: "HVAC",             low: 150,   mid: 300,   high: 600   },
+        hvac_air_balance_allowance:          { label: "HVAC Air Balance / Test Allowance",         unit: "SF", category: "HVAC",             low: 0.35,  mid: 0.75,  high: 1.25  },
+      },
+      assemblies: [
+        {
+          id: "interior_wall", name: "Interior Wall", group: "Structural",
+          inputs: [
+            { key: "linearFeet",        label: "Linear Feet",        type: "number",  required: true },
+            { key: "heightFt",          label: "Wall Height (ft)",   type: "number",  required: true,  default: 9 },
+            { key: "includeInsulation", label: "Include Insulation", type: "boolean", required: false, default: true },
+            { key: "level5Finish",      label: "Level 5 Finish",     type: "boolean", required: false, default: false },
+          ],
+          calculations: { wallArea: "linearFeet * heightFt", drywallArea: "wallArea * 2" },
+          lineItems: [
+            { rateKey: "framing_interior_wall",   quantityFormula: "linearFeet" },
+            { rateKey: "drywall_hang_tape_finish", quantityFormula: "drywallArea" },
+            { rateKey: "insulation_batt",          quantityFormula: "wallArea",    condition: "includeInsulation == true" },
+            { rateKey: "paint_walls",              quantityFormula: "drywallArea" },
+            { rateKey: "drywall_level5_add",       quantityFormula: "drywallArea", condition: "level5Finish == true" },
+          ],
+        },
+        {
+          id: "flooring", name: "Flooring", group: "Finishes",
+          inputs: [
+            { key: "squareFeet",        label: "Square Feet",            type: "number",  required: true },
+            { key: "materialType",      label: "Material Type",          type: "select",  required: true, options: ["lvp","hardwood","tile"] },
+            { key: "materialCostPerSF", label: "Material Cost / SF ($)", type: "number",  required: true },
+            { key: "wastePct",          label: "Waste Factor",           type: "percent", required: false, default: 0.1 },
+          ],
+          calculations: { netFloorQty: "squareFeet * (1 + wastePct)" },
+          lineItems: [
+            { customItem: { label: "Floor Material", unit: "SF", category: "Flooring Material" }, quantityFormula: "netFloorQty", unitCostFormula: "materialCostPerSF" },
+            { rateSelector: { materialType: { lvp: "floor_install_lvp", hardwood: "floor_install_hardwood", tile: "tile_install_standard" } }, quantityFormula: "squareFeet" },
+          ],
+        },
+        {
+          id: "tile_install", name: "Tile Install", group: "Finishes",
+          inputs: [
+            { key: "squareFeet",            label: "Square Feet",               type: "number", required: true },
+            { key: "tileMaterialCostPerSF", label: "Tile Material Cost / SF ($)", type: "number", required: true },
+          ],
+          lineItems: [
+            { customItem: { label: "Tile Material", unit: "SF", category: "Tile Material" }, quantityFormula: "squareFeet", unitCostFormula: "tileMaterialCostPerSF" },
+            { rateKey: "tile_install_standard", quantityFormula: "squareFeet" },
+          ],
+        },
+        {
+          id: "paint_area", name: "Paint Area", group: "Finishes",
+          inputs: [{ key: "paintableSquareFeet", label: "Paintable Square Feet", type: "number", required: true }],
+          lineItems: [{ rateKey: "paint_walls", quantityFormula: "paintableSquareFeet" }],
+        },
+        {
+          id: "demo_area", name: "Demo Area", group: "Demo",
+          inputs: [
+            { key: "squareFeet", label: "Square Feet", type: "number", required: true },
+            { key: "demoType",   label: "Demo Type",   type: "select", required: true, options: ["light","selective","heavy"] },
+          ],
+          lineItems: [{ rateSelector: { demoType: { light: "demo_light", selective: "demo_selective", heavy: "demo_heavy" } }, quantityFormula: "squareFeet" }],
+        },
+        {
+          id: "wall_demo", name: "Wall Demo", group: "Demo",
+          inputs: [
+            { key: "linearFeet",   label: "Linear Feet",      type: "number", required: true },
+            { key: "wallHeightFt", label: "Wall Height (ft)", type: "number", required: false, default: 9 },
+          ],
+          lineItems: [{ rateKey: "demo_wall", quantityFormula: "linearFeet" }],
+        },
+        {
+          id: "act_ceiling_refresh", name: "ACT Ceiling Refresh", group: "Ceilings",
+          inputs: [
+            { key: "squareFeet",                     label: "Total Ceiling SF",             type: "number",  required: true },
+            { key: "replacePct",                     label: "Replacement %",                type: "percent", required: false, default: 0.25 },
+            { key: "gridTouchUp",                    label: "Grid Touch-Up",                type: "boolean", required: false, default: true },
+            { key: "includeGridReplacementAllowance",label: "Grid Replacement Allowance",   type: "boolean", required: false, default: false },
+          ],
+          calculations: { replacementArea: "squareFeet * replacePct" },
+          lineItems: [
+            { rateKey: "act_refresh_tile_replace",           quantityFormula: "replacementArea" },
+            { rateKey: "act_refresh_grid_touchup",           quantityFormula: "squareFeet",      condition: "gridTouchUp == true" },
+            { rateKey: "act_refresh_grid_replace_allowance", quantityFormula: "replacementArea", condition: "includeGridReplacementAllowance == true" },
+          ],
+        },
+        {
+          id: "electrical_rough_sf", name: "Electrical Rough by SF", group: "MEP",
+          inputs: [
+            { key: "squareFeet",     label: "Square Feet",     type: "number",  required: true },
+            { key: "intensityLevel", label: "Intensity Level", type: "select",  required: true, options: ["light","standard","heavy"] },
+            { key: "panelWork",      label: "Panel Work",      type: "boolean", required: false, default: false },
+          ],
+          lineItems: [
+            { rateSelector: { intensityLevel: { light: "electrical_rough_sf_light", standard: "electrical_rough_sf_standard", heavy: "electrical_rough_sf_heavy" } }, quantityFormula: "squareFeet" },
+            { rateKey: "electrical_panel_allowance", quantityFormula: "1", condition: "panelWork == true" },
+          ],
+        },
+        {
+          id: "restroom_refresh", name: "Restroom Refresh", group: "Specialties",
+          inputs: [
+            { key: "restroomCount",      label: "Number of Restrooms",  type: "number",  required: true },
+            { key: "includeFixtures",    label: "Include Fixtures",     type: "boolean", required: false, default: true },
+            { key: "includeAccessories", label: "Include Accessories",  type: "boolean", required: false, default: true },
+            { key: "includeTileRefresh", label: "Include Tile Refresh", type: "boolean", required: false, default: false },
+            { key: "includePaint",       label: "Include Paint",        type: "boolean", required: false, default: true },
+          ],
+          lineItems: [
+            { rateKey: "restroom_refresh_allowance",      quantityFormula: "restroomCount" },
+            { rateKey: "restroom_fixture_allowance",      quantityFormula: "restroomCount", condition: "includeFixtures == true" },
+            { rateKey: "restroom_accessories_allowance",  quantityFormula: "restroomCount", condition: "includeAccessories == true" },
+            { rateKey: "restroom_tile_refresh_allowance", quantityFormula: "restroomCount", condition: "includeTileRefresh == true" },
+            { rateKey: "restroom_paint_allowance",        quantityFormula: "restroomCount", condition: "includePaint == true" },
+          ],
+        },
+        {
+          id: "millwork_allowance", name: "Millwork Allowance", group: "Specialties",
+          inputs: [
+            { key: "linearFeet",    label: "Linear Feet",    type: "number", required: true },
+            { key: "allowanceType", label: "Allowance Type", type: "select", required: true, options: ["basic","service_counter","midgrade_casework","premium_custom"] },
+          ],
+          lineItems: [{ rateSelector: { allowanceType: { basic: "millwork_allowance_basic", service_counter: "millwork_allowance_service_counter", midgrade_casework: "millwork_allowance_midgrade_casework", premium_custom: "millwork_allowance_premium_custom" } }, quantityFormula: "linearFeet" }],
+        },
+        {
+          id: "hvac_refresh_update", name: "HVAC Refresh / Update", group: "MEP",
+          inputs: [
+            { key: "squareFeet",       label: "Square Feet",             type: "number",  required: true },
+            { key: "updateLevel",      label: "Update Level",            type: "select",  required: true, options: ["light","moderate","heavy"] },
+            { key: "includeAirBalance",label: "Include Air Balance",     type: "boolean", required: false, default: true },
+            { key: "diffuserCount",    label: "Diffuser / Register Count",type: "number", required: false, default: 0 },
+          ],
+          lineItems: [
+            { rateSelector: { updateLevel: { light: "hvac_refresh_light", moderate: "hvac_update_moderate", heavy: "hvac_update_heavy" } }, quantityFormula: "squareFeet" },
+            { rateKey: "hvac_air_balance_allowance", quantityFormula: "squareFeet",    condition: "includeAirBalance == true" },
+            { rateKey: "hvac_diffuser_replace",      quantityFormula: "diffuserCount", condition: "diffuserCount > 0" },
+          ],
+        },
+      ],
+      defaults: { pricingTier: "mid", salesTaxPct: 0.0, contingencyPct: 0.1, overheadPct: 0.1, profitPct: 0.1 },
+    };
+
+    // =========================================================================
+    // ENGINES
+    // =========================================================================
+    function evalExpr(expr, ctx) {
+      const s = String(expr).trim();
+      if (/^-?\d+(\.\d+)?$/.test(s)) return parseFloat(s);
+      try {
+        const keys = Object.keys(ctx), vals = keys.map(k => ctx[k]);
+        const r = new Function(...keys, `return (${s});`)(...vals);
+        return isFinite(r) ? Number(r) : 0;
+      } catch { return 0; }
+    }
+
+    function evalCond(cond, ctx) {
+      if (!cond) return true;
+      try {
+        const keys = Object.keys(ctx), vals = keys.map(k => ctx[k]);
+        return Boolean(new Function(...keys, `return (${cond});`)(...vals));
+      } catch { return false; }
+    }
+
+    function resolveRateKey(liDef, inputs) {
+      if (liDef.rateKey) return liDef.rateKey;
+      if (liDef.rateSelector) {
+        const [ik, map] = Object.entries(liDef.rateSelector)[0];
+        return map[inputs[ik]] || null;
+      }
+      return null;
+    }
+
+    function computeLineItems(asmDef, inputs, tier, overrides = {}) {
+      const ctx = { ...inputs };
+      if (asmDef.calculations)
+        for (const [k, f] of Object.entries(asmDef.calculations)) ctx[k] = evalExpr(f, ctx);
+
+      return asmDef.lineItems.flatMap((liDef, i) => {
+        if (liDef.condition && !evalCond(liDef.condition, ctx)) return [];
+        const qty = evalExpr(liDef.quantityFormula, ctx);
+        if (qty <= 0) return [];
+
+        let rateKey, label, unit, category, baseUnitCost;
+        if (liDef.rateKey || liDef.rateSelector) {
+          rateKey = resolveRateKey(liDef, inputs);
+          const r = DB.rates[rateKey]; if (!r) return [];
+          ({ label, unit, category } = r); baseUnitCost = r[tier];
+        } else if (liDef.customItem) {
+          rateKey = `__c_${asmDef.id}_${i}`;
+          ({ label, unit, category } = liDef.customItem);
+          baseUnitCost = evalExpr(liDef.unitCostFormula, ctx);
+        } else return [];
+
+        const unitCost = overrides[rateKey] !== undefined ? overrides[rateKey] : baseUnitCost;
+        const q = Math.round(qty * 100) / 100;
+        return [{ id: `${asmDef.id}_${i}`, rateKey, label, unit, category, qty: q, unitCost, baseUnitCost, total: Math.round(q * unitCost * 100) / 100, isOverridden: overrides[rateKey] !== undefined, isCustom: !!liDef.customItem }];
+      });
+    }
+
+    // =========================================================================
+    // STORAGE
+    // =========================================================================
+    const SK = "tradescope_v1";
+    const load = () => { try { const r = localStorage.getItem(SK); return r ? JSON.parse(r) : null; } catch { return null; } };
+    const save = d => { try { localStorage.setItem(SK, JSON.stringify(d)); } catch {} };
+
+    // =========================================================================
+    // UTILS
+    // =========================================================================
+    const fmtUSD  = n => new Intl.NumberFormat("en-US", { style:"currency", currency:"USD", minimumFractionDigits:0, maximumFractionDigits:0 }).format(n);
+    const fmtUSD2 = n => new Intl.NumberFormat("en-US", { style:"currency", currency:"USD", minimumFractionDigits:2, maximumFractionDigits:2 }).format(n);
+    const fmtPct  = n => `${(n*100).toFixed(0)}%`;
+    let _id = Date.now(); const uid = () => `ts_${_id++}`;
+
+    const OPTION_LABELS = { lvp:"LVP (Luxury Vinyl Plank)", hardwood:"Hardwood", tile:"Tile", none:"None", light:"Light", moderate:"Moderate", heavy:"Heavy", standard:"Standard TI", selective:"Selective", basic:"Basic Painted Base Cabinetry", service_counter:"Retail Service Counter", midgrade_casework:"Mid-Grade Laminate Casework", premium_custom:"Premium Custom Millwork" };
+    const GROUPS = ["Structural","Finishes","Demo","Ceilings","MEP","Specialties"];
+    const GROUP_COLOR = { Structural:"bg-slate-100 text-slate-700", Finishes:"bg-emerald-50 text-emerald-700", Demo:"bg-red-50 text-red-700", Ceilings:"bg-sky-50 text-sky-700", MEP:"bg-amber-50 text-amber-700", Specialties:"bg-purple-50 text-purple-700" };
+
+    // =========================================================================
+    // ICONS (inline SVG — no external dependency)
+    // =========================================================================
+    const Svg = ({d, className="w-4 h-4", multi}) => (
+      <svg className={className} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={1.75} strokeLinecap="round" strokeLinejoin="round">
+        {multi ? multi.map((p,i) => <path key={i} d={p}/>) : <path d={d}/>}
+      </svg>
+    );
+    const IconPlus      = ({c}) => <Svg className={c||"w-3.5 h-3.5"} d="M12 4v16m8-8H4"/>;
+    const IconTrash     = ({c}) => <Svg className={c||"w-3.5 h-3.5"} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>;
+    const IconEdit      = ({c}) => <Svg className={c||"w-3.5 h-3.5"} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"/>;
+    const IconDown      = ({c}) => <Svg className={c||"w-4 h-4"}   d="M19 9l-7 7-7-7"/>;
+    const IconRight     = ({c}) => <Svg className={c||"w-4 h-4"}   d="M9 5l7 7-7 7"/>;
+    const IconX         = ({c}) => <Svg className={c||"w-4 h-4"}   d="M6 18L18 6M6 6l12 12"/>;
+    const IconSettings  = ({c}) => <Svg className={c||"w-4 h-4"}   multi={["M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z","M15 12a3 3 0 11-6 0 3 3 0 016 0z"]}/>;
+    const IconBuilding  = ({c}) => <Svg className={c||"w-6 h-6"}   d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/>;
+    const IconAlert     = ({c}) => <Svg className={c||"w-4 h-4"}   d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>;
+    const IconReset     = ({c}) => <Svg className={c||"w-3 h-3"}   d="M3 10a9 9 0 019-9m0 0v4m0-4L9 4m3-3l3 3m6 5a9 9 0 01-9 9m0 0v-4m0 4l-3-3m3 3l3-3"/>;
+
+    // =========================================================================
+    // COMPONENTS
+    // =========================================================================
+
+    function TierSelector({ tier, onChange }) {
+      const opts = [
+        { k:"low",  l:"Low",  a:"bg-emerald-500 text-white", i:"bg-gray-800 text-gray-400 hover:bg-gray-700" },
+        { k:"mid",  l:"Mid",  a:"bg-blue-500 text-white",    i:"bg-gray-800 text-gray-400 hover:bg-gray-700" },
+        { k:"high", l:"High", a:"bg-amber-500 text-white",   i:"bg-gray-800 text-gray-400 hover:bg-gray-700" },
+      ];
+      return (
+        <div className="flex items-center gap-1">
+          <span className="text-gray-400 text-xs mr-1">Pricing:</span>
+          <div className="flex rounded-lg overflow-hidden border border-gray-600">
+            {opts.map(o => (
+              <button key={o.k} onClick={() => onChange(o.k)} className={`px-3 py-1 text-xs font-semibold transition-colors ${tier===o.k ? o.a : o.i}`}>{o.l}</button>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function AssemblyPalette({ onAdd }) {
+      const byGroup = {};
+      GROUPS.forEach(g => { byGroup[g] = DB.assemblies.filter(a => a.group === g); });
+      return (
+        <div className="h-full flex flex-col bg-gray-50 border-r border-gray-200">
+          <div className="px-3 py-3 border-b border-gray-200">
+            <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Assembly Palette</p>
+          </div>
+          <div className="flex-1 overflow-y-auto px-2 py-2 space-y-3">
+            {GROUPS.map(g => (
+              <div key={g}>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 px-1 mb-1">{g}</p>
+                <div className="space-y-0.5">
+                  {byGroup[g].map(def => (
+                    <button key={def.id} onClick={() => onAdd(def)}
+                      className="w-full text-left flex items-center gap-2 px-2.5 py-2 text-xs rounded-md border border-gray-200 bg-white text-gray-700 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300 transition-all">
+                      <IconPlus /> <span className="truncate font-medium">{def.name}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function AssemblyFormModal({ asmDef, initialInputs, onSave, onClose }) {
+      const getDefault = inp => {
+        if (initialInputs && initialInputs[inp.key] !== undefined)
+          return inp.type === "percent" ? (initialInputs[inp.key] * 100).toFixed(1) : initialInputs[inp.key];
+        if (inp.default !== undefined) return inp.type === "percent" ? (inp.default * 100).toFixed(1) : inp.default;
+        if (inp.type === "boolean") return false;
+        if (inp.type === "select") return inp.options[0];
+        return "";
+      };
+      const [vals, setVals] = useState(() => { const o={}; asmDef.inputs.forEach(i => o[i.key]=getDefault(i)); return o; });
+      const set = (k,v) => setVals(p => ({...p,[k]:v}));
+
+      const handleSubmit = e => {
+        e.preventDefault();
+        const out = {};
+        asmDef.inputs.forEach(inp => {
+          if (inp.type==="number")  out[inp.key] = parseFloat(vals[inp.key])||0;
+          else if (inp.type==="percent") out[inp.key] = (parseFloat(vals[inp.key])||0)/100;
+          else out[inp.key] = vals[inp.key];
+        });
+        onSave(out);
+      };
+
+      return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <div>
+                <h3 className="text-base font-bold text-gray-900">{initialInputs?"Edit":"Add"} — {asmDef.name}</h3>
+                <p className="text-xs text-gray-400 mt-0.5">Enter quantities to generate line items</p>
+              </div>
+              <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg"><IconX /></button>
+            </div>
+            <form onSubmit={handleSubmit} className="px-6 py-5 space-y-4">
+              {asmDef.inputs.map(inp => (
+                <div key={inp.key}>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                    {inp.label}{inp.required && <span className="text-red-400 ml-1">*</span>}
+                  </label>
+                  {(inp.type==="number"||inp.type==="percent") && (
+                    <div className="relative">
+                      <input type="number" step="any" min="0" required={inp.required} value={vals[inp.key]}
+                        onChange={e => set(inp.key, e.target.value)}
+                        placeholder={inp.default!==undefined ? `Default: ${inp.type==="percent"?(inp.default*100).toFixed(0):inp.default}` : ""}
+                        className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+                      {inp.type==="percent" && <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>}
+                    </div>
+                  )}
+                  {inp.type==="boolean" && (
+                    <button type="button" onClick={() => set(inp.key,!vals[inp.key])}
+                      className={`flex items-center gap-2.5 px-3.5 py-2.5 rounded-lg border text-sm font-medium transition-all ${vals[inp.key]?"bg-blue-50 border-blue-300 text-blue-700":"bg-white border-gray-300 text-gray-600 hover:bg-gray-50"}`}>
+                      <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${vals[inp.key]?"bg-blue-500 border-blue-500":"border-gray-400"}`}>
+                        {vals[inp.key] && <svg className="w-2.5 h-2.5 text-white" fill="none" viewBox="0 0 10 10"><path d="M1.5 5l2.5 2.5L8.5 2" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"/></svg>}
+                      </div>
+                      {vals[inp.key]?"Yes — Included":"No — Excluded"}
+                    </button>
+                  )}
+                  {inp.type==="select" && (
+                    <select value={vals[inp.key]} onChange={e => set(inp.key,e.target.value)}
+                      className="w-full px-3 py-2.5 border border-gray-300 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500">
+                      {inp.options.map(o => <option key={o} value={o}>{OPTION_LABELS[o]||o}</option>)}
+                    </select>
+                  )}
+                </div>
+              ))}
+              <div className="flex gap-3 pt-2">
+                <button type="button" onClick={onClose} className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-xl hover:bg-gray-50">Cancel</button>
+                <button type="submit" className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-xl hover:bg-blue-700">{initialInputs?"Update Assembly":"Add to Estimate"}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      );
+    }
+
+    function LineItemRow({ item, onOverride, onReset }) {
+      const [editing, setEditing] = useState(false);
+      const [editVal, setEditVal] = useState("");
+      const startEdit = () => { setEditVal(item.unitCost.toFixed(2)); setEditing(true); };
+      const commit = () => { const v=parseFloat(editVal); if(!isNaN(v)&&v>=0) onOverride(item.rateKey,v); setEditing(false); };
+
+      return (
+        <tr className={`group transition-colors ${item.isOverridden?"bg-amber-50/60":"hover:bg-gray-50/80"}`}>
+          <td className="py-2 pl-5 pr-3 text-sm">
+            <div className="flex items-start gap-1.5">
+              {item.isOverridden && <span className="mt-1.5 w-1.5 h-1.5 rounded-full bg-amber-400 flex-shrink-0"/>}
+              <div><span className="text-gray-800">{item.label}</span><span className="block text-[11px] text-gray-400">{item.category}</span></div>
+            </div>
+          </td>
+          <td className="py-2 px-3 text-sm text-right text-gray-500 tabular-nums whitespace-nowrap">
+            {item.qty.toLocaleString()} <span className="text-gray-400">{item.unit}</span>
+          </td>
+          <td className="py-2 px-3 text-sm text-right tabular-nums">
+            {editing ? (
+              <div className="flex items-center justify-end gap-0.5">
+                <span className="text-gray-400 text-xs">$</span>
+                <input autoFocus type="number" step="0.01" min="0" value={editVal}
+                  onChange={e=>setEditVal(e.target.value)} onBlur={commit}
+                  onKeyDown={e=>{if(e.key==="Enter")commit();if(e.key==="Escape")setEditing(false);}}
+                  className="w-20 px-1.5 py-0.5 text-right border border-blue-400 rounded text-sm focus:outline-none"/>
+              </div>
+            ) : (
+              <div className="flex items-center justify-end gap-1">
+                <span className={item.isOverridden?"text-amber-600 font-medium":"text-gray-600"}>{fmtUSD2(item.unitCost)}</span>
+                <div className="flex opacity-0 group-hover:opacity-100 transition-opacity">
+                  <button onClick={startEdit} className="p-0.5 text-gray-400 hover:text-blue-500" title="Override"><IconEdit /></button>
+                  {item.isOverridden && !item.isCustom && <button onClick={()=>onReset(item.rateKey)} className="p-0.5 text-amber-400 hover:text-amber-600" title="Reset"><IconReset /></button>}
+                </div>
+              </div>
+            )}
+          </td>
+          <td className="py-2 pl-3 pr-5 text-sm text-right font-semibold text-gray-800 tabular-nums">{fmtUSD(item.total)}</td>
+        </tr>
+      );
+    }
+
+    function AssemblyCard({ instance, asmDef, tier, rateOverrides, onEdit, onRemove, onRateOverride, onResetRateOverride }) {
+      const [collapsed, setCollapsed] = useState(false);
+      const lineItems = useMemo(() => computeLineItems(asmDef, instance.inputs, tier, rateOverrides), [asmDef, instance.inputs, tier, rateOverrides]);
+      const subtotal = lineItems.reduce((s,i) => s+i.total, 0);
+      const summary = asmDef.inputs.filter(i=>(i.type==="number"||i.type==="percent")&&instance.inputs[i.key]).slice(0,2)
+        .map(i=>{ const v=instance.inputs[i.key]; const u=i.key.toLowerCase().includes("feet")?(i.key.includes("linear")?" LF":" SF"):""; return `${i.type==="percent"?(v*100).toFixed(0)+"%":v}${u}`; }).join(" · ");
+
+      return (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <div className="flex items-center gap-3 px-4 py-3 bg-gray-50/80 border-b border-gray-100 cursor-pointer select-none" onClick={()=>setCollapsed(!collapsed)}>
+            <span className="text-gray-400 flex-shrink-0">{collapsed?<IconRight/>:<IconDown/>}</span>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="font-semibold text-gray-900 text-sm">{asmDef.name}</span>
+                <span className={`text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full ${GROUP_COLOR[asmDef.group]}`}>{asmDef.group}</span>
+                {summary && <span className="text-xs text-gray-400">{summary}</span>}
+              </div>
+              <p className="text-[11px] text-gray-400 mt-0.5">{lineItems.length} item{lineItems.length!==1?"s":""}</p>
+            </div>
+            <div className="text-right flex-shrink-0"><div className="font-bold text-gray-900 text-sm tabular-nums">{fmtUSD(subtotal)}</div></div>
+            <div className="flex items-center gap-0.5 ml-1 flex-shrink-0" onClick={e=>e.stopPropagation()}>
+              <button onClick={()=>onEdit(instance)} className="p-1.5 text-gray-400 hover:text-blue-500 hover:bg-blue-50 rounded-lg transition-colors" title="Edit"><IconEdit /></button>
+              <button onClick={()=>onRemove(instance.id)} className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg transition-colors" title="Remove"><IconTrash /></button>
+            </div>
+          </div>
+          {!collapsed && (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead><tr className="border-b border-gray-100">
+                  <th className="py-2 pl-5 pr-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Description</th>
+                  <th className="py-2 px-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Quantity</th>
+                  <th className="py-2 px-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Unit Cost</th>
+                  <th className="py-2 pl-3 pr-5 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Total</th>
+                </tr></thead>
+                <tbody className="divide-y divide-gray-50">
+                  {lineItems.map(item => <LineItemRow key={item.id} item={item} onOverride={onRateOverride} onReset={onResetRateOverride}/>)}
+                </tbody>
+                <tfoot><tr className="border-t border-gray-200 bg-gray-50/50">
+                  <td colSpan={3} className="py-2.5 pl-5 pr-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Assembly Subtotal</td>
+                  <td className="py-2.5 pl-3 pr-5 text-sm font-bold text-gray-900 text-right tabular-nums">{fmtUSD(subtotal)}</td>
+                </tr></tfoot>
+              </table>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    function SettingsModal({ settings, onUpdate, onClose }) {
+      const [local, setLocal] = useState({...settings});
+      const fields = [
+        { key:"contingencyPct", label:"Contingency", hint:"Applied to direct costs" },
+        { key:"overheadPct",    label:"Overhead",    hint:"Applied after contingency" },
+        { key:"profitPct",      label:"Profit",      hint:"Applied after contingency" },
+        { key:"salesTaxPct",    label:"Sales Tax",   hint:"Applied to direct costs" },
+      ];
+      return (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4" onClick={onClose}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-sm" onClick={e=>e.stopPropagation()}>
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+              <div><h3 className="font-bold text-gray-900">Estimate Settings</h3><p className="text-xs text-gray-400 mt-0.5">Modifiers applied to all line items</p></div>
+              <button onClick={onClose} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg"><IconX /></button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              {fields.map(({key,label,hint}) => (
+                <div key={key} className="flex items-center justify-between gap-4">
+                  <div><p className="text-sm font-medium text-gray-700">{label}</p><p className="text-xs text-gray-400">{hint}</p></div>
+                  <div className="flex items-center gap-1.5 flex-shrink-0">
+                    <input type="number" step="0.5" min="0" max="100" value={(local[key]*100).toFixed(1)}
+                      onChange={e=>setLocal(s=>({...s,[key]:parseFloat(e.target.value)/100||0}))}
+                      className="w-20 px-2 py-1.5 text-right border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"/>
+                    <span className="text-sm text-gray-400 w-4">%</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="px-6 py-4 border-t border-gray-100 flex gap-3">
+              <button onClick={onClose} className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 border border-gray-300 rounded-xl hover:bg-gray-50">Cancel</button>
+              <button onClick={()=>{onUpdate(local);onClose();}} className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-blue-600 rounded-xl hover:bg-blue-700">Save Settings</button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function SRow({ label, value, bold, sub }) {
+      return (
+        <div className={`flex items-center justify-between ${sub?"pl-2":""}`}>
+          <span className={`text-xs ${bold?"font-semibold text-gray-800":"text-gray-500"}`}>{label}</span>
+          <span className={`text-xs tabular-nums ${bold?"font-semibold text-gray-800":"text-gray-500"}`}>{value}</span>
+        </div>
+      );
+    }
+
+    function SummaryPanel({ instances, tier, rateOverrides, settings, onSettingsOpen }) {
+      const allItems = useMemo(() => instances.flatMap(inst => {
+        const def = DB.assemblies.find(a => a.id===inst.assemblyId); if(!def) return [];
+        return computeLineItems(def, inst.inputs, tier, rateOverrides);
+      }), [instances, tier, rateOverrides]);
+
+      const direct = allItems.reduce((s,i)=>s+i.total, 0);
+      const contingency = direct * settings.contingencyPct;
+      const base = direct + contingency;
+      const overhead = base * settings.overheadPct;
+      const profit = base * settings.profitPct;
+      const tax = direct * settings.salesTaxPct;
+      const total = base + overhead + profit + tax;
+      const margin = total > 0 ? ((total-direct)/total*100).toFixed(1) : 0;
+
+      const byCategory = {};
+      allItems.forEach(i => { byCategory[i.category]=(byCategory[i.category]||0)+i.total; });
+      const cats = Object.entries(byCategory).sort(([,a],[,b])=>b-a);
+
+      const tierBadge = { low:"bg-emerald-100 text-emerald-700 border-emerald-200", mid:"bg-blue-100 text-blue-700 border-blue-200", high:"bg-amber-100 text-amber-700 border-amber-200" };
+
+      return (
+        <div className="h-full bg-white border-l border-gray-200 flex flex-col overflow-hidden">
+          <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+            <div>
+              <h2 className="font-bold text-gray-900 text-sm">Cost Summary</h2>
+              <span className={`inline-block mt-0.5 px-2 py-0.5 text-[10px] font-semibold rounded-full border ${tierBadge[tier]}`}>{tier.charAt(0).toUpperCase()+tier.slice(1)} Pricing</span>
+            </div>
+            <button onClick={onSettingsOpen} className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg" title="Settings"><IconSettings /></button>
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            {direct===0 ? (
+              <div className="flex flex-col items-center justify-center h-40 text-center px-4">
+                <IconBuilding c="w-8 h-8 text-gray-200 mx-auto mb-2"/>
+                <p className="text-xs text-gray-400">Add assemblies to see cost summary</p>
+              </div>
+            ) : (<>
+              <div className="px-4 py-4 border-b border-gray-100">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-3">Breakdown</p>
+                <div className="space-y-2.5">
+                  <SRow label="Direct Costs" value={fmtUSD(direct)} bold/>
+                  <SRow label={`Contingency (${fmtPct(settings.contingencyPct)})`} value={`+ ${fmtUSD(contingency)}`} sub/>
+                  <div className="border-t border-gray-100 pt-2.5"><SRow label="Cost w/ Contingency" value={fmtUSD(base)} bold/></div>
+                  <SRow label={`Overhead (${fmtPct(settings.overheadPct)})`} value={`+ ${fmtUSD(overhead)}`} sub/>
+                  <SRow label={`Profit (${fmtPct(settings.profitPct)})`} value={`+ ${fmtUSD(profit)}`} sub/>
+                  {settings.salesTaxPct>0 && <SRow label={`Tax (${fmtPct(settings.salesTaxPct)})`} value={`+ ${fmtUSD(tax)}`} sub/>}
+                </div>
+                <div className="mt-4 pt-3 border-t-2 border-gray-900">
+                  <div className="flex items-baseline justify-between">
+                    <span className="font-bold text-gray-900 text-sm">Total Sell Price</span>
+                    <span className="font-black text-gray-900 text-xl tabular-nums">{fmtUSD(total)}</span>
+                  </div>
+                  <div className="flex justify-between mt-1 text-xs text-gray-400">
+                    <span>Gross Margin</span><span className="tabular-nums font-medium">{margin}%</span>
+                  </div>
+                </div>
+              </div>
+              {cats.length > 0 && (
+                <div className="px-4 py-4">
+                  <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-3">By Trade</p>
+                  <div className="space-y-3">
+                    {cats.map(([cat,amt]) => (
+                      <div key={cat}>
+                        <div className="flex justify-between text-xs mb-1">
+                          <span className="text-gray-600 font-medium truncate">{cat}</span>
+                          <span className="text-gray-500 tabular-nums ml-2 flex-shrink-0">{fmtUSD(amt)}</span>
+                        </div>
+                        <div className="w-full bg-gray-100 rounded-full h-1.5">
+                          <div className="bg-blue-500 h-1.5 rounded-full" style={{width:`${direct>0?(amt/direct*100):0}%`}}/>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </>)}
+          </div>
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // MAIN APP
+    // =========================================================================
+    const DEFAULT_SETTINGS = { projectName:"New Estimate", pricingTier:"mid", salesTaxPct:0, contingencyPct:0.1, overheadPct:0.1, profitPct:0.1 };
+
+    function TradeScope() {
+      const saved = load();
+      const [settings,    setSettings]    = useState(saved?.settings    ?? {...DEFAULT_SETTINGS});
+      const [instances,   setInstances]   = useState(saved?.instances   ?? []);
+      const [rateOverrides, setRateOverrides] = useState(saved?.rateOverrides ?? {});
+      const [addingDef,   setAddingDef]   = useState(null);
+      const [editingPair, setEditingPair] = useState(null);
+      const [showSettings,setShowSettings]= useState(false);
+      const [editingName, setEditingName] = useState(false);
+
+      useEffect(() => { save({ settings, instances, rateOverrides }); }, [settings, instances, rateOverrides]);
+
+      const addAssembly = (def, inputs) => { setInstances(p=>[...p,{id:uid(),assemblyId:def.id,inputs}]); setAddingDef(null); };
+      const updateAssembly = (id, inputs) => { setInstances(p=>p.map(i=>i.id===id?{...i,inputs}:i)); setEditingPair(null); };
+      const removeAssembly = id => setInstances(p=>p.filter(i=>i.id!==id));
+      const setOverride = (k,v) => setRateOverrides(p=>({...p,[k]:v}));
+      const resetOverride = k => setRateOverrides(p=>{ const n={...p}; delete n[k]; return n; });
+      const tier = settings.pricingTier;
+
+      return (
+        <div className="h-screen flex flex-col bg-gray-50 overflow-hidden" style={{fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          {/* Header */}
+          <header className="bg-gray-900 text-white flex items-center gap-4 px-5 py-2.5 flex-shrink-0 shadow-lg z-10">
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <IconBuilding c="w-5 h-5 text-blue-400"/>
+              <span className="font-black text-base tracking-tight">TradeScope</span>
+              <span className="text-gray-600 text-xs">· San Diego, CA</span>
+            </div>
+            <div className="h-4 w-px bg-gray-700"/>
+            {editingName ? (
+              <input autoFocus type="text" value={settings.projectName}
+                onChange={e=>setSettings(s=>({...s,projectName:e.target.value}))}
+                onBlur={()=>setEditingName(false)}
+                onKeyDown={e=>{if(e.key==="Enter"||e.key==="Escape")setEditingName(false);}}
+                className="bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 outline-none w-52"/>
+            ) : (
+              <button onClick={()=>setEditingName(true)} className="flex items-center gap-1.5 text-sm text-gray-300 hover:text-white group">
+                <span>{settings.projectName}</span>
+                <IconEdit c="w-3 h-3 text-gray-600 group-hover:text-gray-400"/>
+              </button>
+            )}
+            <div className="flex-1"/>
+            {instances.length>0 && <>
+              <span className="text-xs text-gray-500 hidden sm:block">{instances.length} assembl{instances.length===1?"y":"ies"}</span>
+              <button onClick={()=>{ if(confirm("Clear all assemblies?")){ setInstances([]); setRateOverrides({}); }}} className="text-xs text-gray-500 hover:text-red-400 px-2 py-1 rounded hidden sm:block">Clear</button>
+            </>}
+            <div className="h-4 w-px bg-gray-700"/>
+            <TierSelector tier={tier} onChange={t=>setSettings(s=>({...s,pricingTier:t}))}/>
+          </header>
+
+          {/* 3-column layout */}
+          <div className="flex flex-1 overflow-hidden">
+            <div className="w-48 flex-shrink-0"><AssemblyPalette onAdd={setAddingDef}/></div>
+            <div className="flex-1 overflow-y-auto">
+              {instances.length===0 ? (
+                <div className="flex flex-col items-center justify-center h-full text-center px-8 pb-16">
+                  <div className="w-16 h-16 bg-gray-100 rounded-2xl flex items-center justify-center mb-4">
+                    <IconBuilding c="w-8 h-8 text-gray-300"/>
+                  </div>
+                  <h3 className="text-lg font-bold text-gray-400 mb-1">No assemblies yet</h3>
+                  <p className="text-sm text-gray-400 max-w-xs">Select an assembly from the left panel to start building your estimate.</p>
+                  <div className="mt-6 flex items-center gap-2 text-xs text-gray-400 bg-gray-100 px-3 py-2 rounded-lg">
+                    <IconAlert/> All costs driven by the JSON rate database — no hardcoded values.
+                  </div>
+                </div>
+              ) : (
+                <div className="p-4 space-y-3 max-w-3xl">
+                  {instances.map(inst => {
+                    const def = DB.assemblies.find(a=>a.id===inst.assemblyId); if(!def) return null;
+                    return <AssemblyCard key={inst.id} instance={inst} asmDef={def} tier={tier} rateOverrides={rateOverrides}
+                      onEdit={inst=>setEditingPair({instance:inst,def})} onRemove={removeAssembly}
+                      onRateOverride={setOverride} onResetRateOverride={resetOverride}/>;
+                  })}
+                </div>
+              )}
+            </div>
+            <div className="w-60 flex-shrink-0">
+              <SummaryPanel instances={instances} tier={tier} rateOverrides={rateOverrides} settings={settings} onSettingsOpen={()=>setShowSettings(true)}/>
+            </div>
+          </div>
+
+          {addingDef && <AssemblyFormModal asmDef={addingDef} initialInputs={null} onSave={inputs=>addAssembly(addingDef,inputs)} onClose={()=>setAddingDef(null)}/>}
+          {editingPair && <AssemblyFormModal asmDef={editingPair.def} initialInputs={editingPair.instance.inputs} onSave={inputs=>updateAssembly(editingPair.instance.id,inputs)} onClose={()=>setEditingPair(null)}/>}
+          {showSettings && <SettingsModal settings={settings} onUpdate={setSettings} onClose={()=>setShowSettings(false)}/>}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<TradeScope/>);
+  </script>
+</body>
 </html>
