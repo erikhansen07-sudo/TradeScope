@@ -203,7 +203,7 @@
         const keys = Object.keys(ctx), vals = keys.map(k => ctx[k]);
         const r = new Function(...keys, `return (${s});`)(...vals);
         return isFinite(r) ? Number(r) : 0;
-      } catch { return 0; }
+      } catch(e) { return 0; }
     }
 
     function evalCond(cond, ctx) {
@@ -211,7 +211,7 @@
       try {
         const keys = Object.keys(ctx), vals = keys.map(k => ctx[k]);
         return Boolean(new Function(...keys, `return (${cond});`)(...vals));
-      } catch { return false; }
+      } catch(e) { return false; }
     }
 
     function resolveRateKey(liDef, inputs) {
@@ -254,8 +254,8 @@
     // STORAGE
     // =========================================================================
     const SK = "tradescope_v1";
-    const load = () => { try { const r = localStorage.getItem(SK); return r ? JSON.parse(r) : null; } catch { return null; } };
-    const save = d => { try { localStorage.setItem(SK, JSON.stringify(d)); } catch {} };
+    const load = () => { try { const r = localStorage.getItem(SK); return r ? JSON.parse(r) : null; } catch(e) { return null; } };
+    const save = d => { try { localStorage.setItem(SK, JSON.stringify(d)); } catch(e) {} };
 
     // =========================================================================
     // UTILS
