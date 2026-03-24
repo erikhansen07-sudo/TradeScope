@@ -28,9 +28,9 @@
         drywall_level5_add:                  { label: "Drywall Level 5 Add",                       unit: "SF", category: "Drywall",          low: 0.75,  mid: 1.0,   high: 1.5   },
         insulation_batt:                     { label: "Batt Insulation",                           unit: "SF", category: "Insulation",       low: 1.5,   mid: 2.25,  high: 3.0   },
         paint_walls:                         { label: "Wall Paint",                                unit: "SF", category: "Paint",            low: 1.5,   mid: 2.25,  high: 3.5   },
-        floor_install_lvp:                   { label: "LVP Install",                               unit: "SF", category: "Flooring",         low: 3.0,   mid: 4.5,   high: 6.0   },
-        floor_install_hardwood:              { label: "Hardwood Install",                          unit: "SF", category: "Flooring",         low: 8.0,   mid: 11.0,  high: 15.0  },
-        tile_install_standard:               { label: "Tile Install Standard",                     unit: "SF", category: "Tile",             low: 10.0,  mid: 15.0,  high: 25.0  },
+        floor_install_lvp:                   { label: "LVP Install",                               unit: "SF", category: "Flooring Install",  low: 3.0,   mid: 4.5,   high: 6.0   },
+        floor_install_hardwood:              { label: "Hardwood Install",                          unit: "SF", category: "Flooring Install",  low: 8.0,   mid: 11.0,  high: 15.0  },
+        tile_install_standard:               { label: "Tile Install Standard",                     unit: "SF", category: "Tile Install",      low: 10.0,  mid: 15.0,  high: 25.0  },
         demo_light:                          { label: "Light Interior Demo",                       unit: "SF", category: "Demo",             low: 3.0,   mid: 5.0,   high: 8.0   },
         demo_selective:                      { label: "Selective Interior Demo",                   unit: "SF", category: "Demo",             low: 6.0,   mid: 9.0,   high: 14.0  },
         demo_heavy:                          { label: "Heavy Interior Demo",                       unit: "SF", category: "Demo",             low: 10.0,  mid: 15.0,  high: 24.0  },
@@ -329,7 +329,8 @@
 
         const unitCost = overrides[rateKey] !== undefined ? overrides[rateKey] : baseUnitCost;
         const q = Math.round(qty * 100) / 100;
-        return [{ id: `${asmDef.id}_${i}`, rateKey, label, unit, category, qty: q, unitCost, baseUnitCost, total: Math.round(q * unitCost * 100) / 100, isOverridden: overrides[rateKey] !== undefined, isCustom: !!liDef.customItem }];
+        const costType = liDef.customItem ? "material" : "labor";
+        return [{ id: `${asmDef.id}_${i}`, rateKey, label, unit, category, qty: q, unitCost, baseUnitCost, total: Math.round(q * unitCost * 100) / 100, isOverridden: overrides[rateKey] !== undefined, isCustom: !!liDef.customItem, costType }];
       });
     }
 
@@ -352,7 +353,12 @@
     const GROUPS = ["Structural","Finishes","Demo","Ceilings","MEP","Specialties","Allowances"];
     const GROUP_COLOR = { Structural:"bg-slate-100 text-slate-700", Finishes:"bg-emerald-50 text-emerald-700", Demo:"bg-red-50 text-red-700", Ceilings:"bg-sky-50 text-sky-700", MEP:"bg-amber-50 text-amber-700", Specialties:"bg-purple-50 text-purple-700", Allowances:"bg-rose-50 text-rose-700" };
 
-    const PURCHASE_CATS = [...DB.assemblies.map(a => a.name), "Other"];
+    const PURCHASE_CATS = (() => {
+      const cats = new Set();
+      Object.values(DB.rates).forEach(r => cats.add(r.category));
+      DB.assemblies.forEach(asm => asm.lineItems.forEach(li => { if (li.customItem) cats.add(li.customItem.category); }));
+      return [...cats].sort().concat(["Other"]);
+    })();
 
     // =========================================================================
     // ICONS (inline SVG — no external dependency)
@@ -722,117 +728,194 @@
     // =========================================================================
     // TRACKER MODULE
     // =========================================================================
-    function TrackerView({ instances, tier, rateOverrides, settings, purchases, onAddPurchase, onDeletePurchase }) {
+    function CatTable({ title, rows, spentByCat, catProgress, onProgressChange }) {
+      if (rows.length === 0) return null;
+      return (
+        <div className="overflow-hidden">
+          <div className="px-4 py-2 bg-gray-100 border-b border-gray-200">
+            <p className="text-[11px] font-bold uppercase tracking-widest text-gray-500">{title}</p>
+          </div>
+          <tbody className="divide-y divide-gray-50">
+            {rows.map(({ cat, budget }) => {
+              const actual = spentByCat[cat] || 0;
+              const rawPct = catProgress[cat] !== undefined ? catProgress[cat] : 0;
+              const pctDone = Math.min(100, Math.max(0, rawPct));
+              // Projected: at 100% done → actual; at 0% or no actual → budget; else extrapolate
+              let projected;
+              if (pctDone >= 100) projected = actual;
+              else if (pctDone === 0 || actual === 0) projected = budget;
+              else projected = actual / (pctDone / 100);
+              const variance = budget - projected;
+              return (
+                <tr key={cat} className="hover:bg-gray-50/60 group">
+                  <td className="py-2.5 pl-4 pr-3 text-sm text-gray-700 font-medium">{cat}</td>
+                  <td className="py-2.5 px-3 text-sm text-right text-gray-500 tabular-nums">{budget > 0 ? fmtUSD(budget) : "—"}</td>
+                  <td className="py-2.5 px-3 text-sm text-right text-gray-500 tabular-nums">{actual > 0 ? fmtUSD(actual) : "—"}</td>
+                  <td className="py-2.5 px-3">
+                    <div className="flex items-center justify-end gap-1">
+                      <input type="number" min="0" max="100" step="1" value={rawPct||""}
+                        onChange={e => onProgressChange(cat, Math.min(100, Math.max(0, parseInt(e.target.value)||0)))}
+                        placeholder="0"
+                        className="w-14 px-1.5 py-0.5 text-right border border-gray-200 rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-400 tabular-nums"/>
+                      <span className="text-gray-400 text-xs">%</span>
+                    </div>
+                  </td>
+                  <td className="py-2.5 px-3 text-sm text-right tabular-nums font-medium text-gray-600">{fmtUSD(Math.round(projected))}</td>
+                  <td className={`py-2.5 pl-3 pr-4 text-sm text-right font-semibold tabular-nums ${variance < 0 ? "text-red-600" : variance > 0 ? "text-emerald-600" : "text-gray-400"}`}>
+                    {budget > 0 || actual > 0 ? (variance >= 0 ? "+" : "") + fmtUSD(Math.round(variance)) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </div>
+      );
+    }
+
+    function TrackerView({ instances, tier, rateOverrides, settings, purchases, onAddPurchase, onDeletePurchase, catProgress, onProgressChange }) {
       const [form, setForm] = useState({ vendor:"", description:"", category: PURCHASE_CATS[0], amount:"", date: new Date().toISOString().split("T")[0], notes:"" });
       const [showForm, setShowForm] = useState(false);
 
-      // Compute budget total (direct costs only, no markup, for budget comparison)
-      const budgetTotal = useMemo(() => {
-        return instances.flatMap(inst => {
-          const def = DB.assemblies.find(a => a.id===inst.assemblyId); if(!def) return [];
-          return computeLineItems(def, inst.inputs, tier, rateOverrides);
-        }).reduce((s,i)=>s+i.total, 0);
-      }, [instances, tier, rateOverrides]);
+      // All line items with costType
+      const allLineItems = useMemo(() => instances.flatMap(inst => {
+        const def = DB.assemblies.find(a => a.id === inst.assemblyId); if (!def) return [];
+        return computeLineItems(def, inst.inputs, tier, rateOverrides);
+      }), [instances, tier, rateOverrides]);
 
-      const totalSpent = purchases.reduce((s,p)=>s+p.amount, 0);
-      const remaining = budgetTotal - totalSpent;
-      const pct = budgetTotal > 0 ? Math.min(100, (totalSpent/budgetTotal)*100) : 0;
+      // Budget by category + costType map
+      const { budgetByCat, costTypeByCat } = useMemo(() => {
+        const b = {}, ct = {};
+        allLineItems.forEach(item => {
+          b[item.category] = (b[item.category] || 0) + item.total;
+          ct[item.category] = item.costType;
+        });
+        return { budgetByCat: b, costTypeByCat: ct };
+      }, [allLineItems]);
 
-      // Category rollup
-      const budgetByCat = useMemo(() => {
-        const out = {};
-        instances.flatMap(inst => {
-          const def = DB.assemblies.find(a=>a.id===inst.assemblyId); if(!def) return [];
-          return computeLineItems(def, inst.inputs, tier, rateOverrides);
-        }).forEach(item => { out[item.category]=(out[item.category]||0)+item.total; });
-        return out;
-      }, [instances, tier, rateOverrides]);
+      const budgetTotal = Object.values(budgetByCat).reduce((s, v) => s + v, 0);
 
       const spentByCat = {};
-      purchases.forEach(p => { spentByCat[p.category]=(spentByCat[p.category]||0)+p.amount; });
+      purchases.forEach(p => { spentByCat[p.category] = (spentByCat[p.category] || 0) + p.amount; });
+      const totalSpent = purchases.reduce((s, p) => s + p.amount, 0);
 
+      // All cats (budget + any actuals with no budget)
       const allCats = Array.from(new Set([...Object.keys(budgetByCat), ...Object.keys(spentByCat)])).sort();
+
+      // Per-category projected cost
+      const projectedByCat = {};
+      allCats.forEach(cat => {
+        const b = budgetByCat[cat] || 0;
+        const a = spentByCat[cat] || 0;
+        const pctDone = Math.min(100, Math.max(0, catProgress[cat] || 0));
+        if (pctDone >= 100) projectedByCat[cat] = a;
+        else if (pctDone === 0 || a === 0) projectedByCat[cat] = b;
+        else projectedByCat[cat] = a / (pctDone / 100);
+      });
+
+      const projectedTotal = Object.values(projectedByCat).reduce((s, v) => s + v, 0);
+      const projectedVariance = budgetTotal - projectedTotal;
+
+      // Weighted % complete (budget-weighted)
+      const weightedPct = budgetTotal > 0
+        ? allCats.reduce((s, cat) => s + (budgetByCat[cat] || 0) * (catProgress[cat] || 0), 0) / budgetTotal
+        : 0;
+
+      const spentPct = budgetTotal > 0 ? Math.min(100, (totalSpent / budgetTotal) * 100) : 0;
+      const spendBarColor = spentPct < 75 ? "bg-emerald-500" : spentPct < 95 ? "bg-amber-500" : "bg-red-500";
+
+      const laborRows  = allCats.filter(c => (costTypeByCat[c] || "labor") === "labor") .map(cat => ({ cat, budget: budgetByCat[cat] || 0 }));
+      const matRows    = allCats.filter(c => (costTypeByCat[c] || "labor") === "material").map(cat => ({ cat, budget: budgetByCat[cat] || 0 }));
 
       const handleAdd = e => {
         e.preventDefault();
         const amt = parseFloat(form.amount);
-        if(!amt || amt<=0) return;
-        onAddPurchase({ id:uid(), vendor:form.vendor, description:form.description, category:form.category, amount:amt, date:form.date, notes:form.notes });
-        setForm({ vendor:"", description:"", category:PURCHASE_CATS[0], amount:"", date: new Date().toISOString().split("T")[0], notes:"" });
+        if (!amt || amt <= 0) return;
+        onAddPurchase({ id: uid(), vendor: form.vendor, description: form.description, category: form.category, amount: amt, date: form.date, notes: form.notes });
+        setForm({ vendor:"", description:"", category: PURCHASE_CATS[0], amount:"", date: new Date().toISOString().split("T")[0], notes:"" });
         setShowForm(false);
       };
 
-      const statusColor = pct < 75 ? "bg-emerald-500" : pct < 95 ? "bg-amber-500" : "bg-red-500";
-
       return (
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
-          {/* Stats row */}
-          <div className="grid grid-cols-3 gap-4">
+
+          {/* Pacing cards */}
+          <div className="grid grid-cols-4 gap-4">
             <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Budget (Direct)</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Budget</p>
               <p className="text-xl font-black text-gray-900 tabular-nums">{fmtUSD(budgetTotal)}</p>
               <p className="text-xs text-gray-400 mt-0.5">{instances.length} assembl{instances.length===1?"y":"ies"}</p>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Spent</p>
-              <p className={`text-xl font-black tabular-nums ${pct>=100?"text-red-600":"text-gray-900"}`}>{fmtUSD(totalSpent)}</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Spent to Date</p>
+              <p className="text-xl font-black text-gray-900 tabular-nums">{fmtUSD(totalSpent)}</p>
               <p className="text-xs text-gray-400 mt-0.5">{purchases.length} purchase{purchases.length===1?"":"s"}</p>
             </div>
             <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Remaining</p>
-              <p className={`text-xl font-black tabular-nums ${remaining<0?"text-red-600":"text-emerald-600"}`}>{fmtUSD(remaining)}</p>
-              <p className="text-xs text-gray-400 mt-0.5">{pct.toFixed(0)}% used</p>
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Projected End</p>
+              <p className={`text-xl font-black tabular-nums ${projectedTotal > budgetTotal ? "text-red-600" : "text-gray-900"}`}>{fmtUSD(Math.round(projectedTotal))}</p>
+              <p className="text-xs text-gray-400 mt-0.5">{weightedPct.toFixed(0)}% complete</p>
+            </div>
+            <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
+              <p className="text-[11px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Projected Variance</p>
+              <p className={`text-xl font-black tabular-nums ${projectedVariance < 0 ? "text-red-600" : "text-emerald-600"}`}>
+                {(projectedVariance >= 0 ? "+" : "") + fmtUSD(Math.round(projectedVariance))}
+              </p>
+              <p className="text-xs text-gray-400 mt-0.5">{projectedVariance >= 0 ? "under budget" : "over budget"}</p>
             </div>
           </div>
 
-          {/* Progress bar */}
+          {/* Spend progress bar */}
           <div className="bg-white rounded-xl border border-gray-200 px-4 py-3">
             <div className="flex justify-between text-xs text-gray-500 mb-2">
-              <span>Budget utilization</span>
-              <span className="font-semibold tabular-nums">{pct.toFixed(1)}%</span>
+              <span>Spend vs Budget</span>
+              <span className="font-semibold tabular-nums">{spentPct.toFixed(1)}% used · {weightedPct.toFixed(0)}% complete</span>
             </div>
-            <div className="w-full bg-gray-100 rounded-full h-3">
-              <div className={`h-3 rounded-full transition-all ${statusColor}`} style={{width:`${pct}%`}}/>
+            <div className="relative w-full bg-gray-100 rounded-full h-3">
+              <div className={`h-3 rounded-full transition-all ${spendBarColor}`} style={{width:`${spentPct}%`}}/>
+              {weightedPct > 0 && (
+                <div className="absolute top-0 h-3 w-0.5 bg-gray-800 rounded-full" style={{left:`${weightedPct}%`}} title={`${weightedPct.toFixed(0)}% complete`}/>
+              )}
+            </div>
+            <div className="flex justify-between text-[10px] text-gray-400 mt-1">
+              <span>Spent {fmtUSD(totalSpent)}</span>
+              {weightedPct > 0 && <span>▲ {weightedPct.toFixed(0)}% done</span>}
+              <span>Budget {fmtUSD(budgetTotal)}</span>
             </div>
           </div>
 
-          {/* Category breakdown table */}
+          {/* Budget vs Actual table — split Labor / Materials */}
           {allCats.length > 0 && (
             <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-              <div className="px-4 py-3 border-b border-gray-100">
-                <p className="text-sm font-bold text-gray-900">Budget vs Actual by Category</p>
+              <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
+                <p className="text-sm font-bold text-gray-900">Budget vs Actual</p>
+                <p className="text-xs text-gray-400">Set % complete per category to project final cost</p>
               </div>
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead><tr className="border-b border-gray-100 bg-gray-50">
-                    <th className="py-2 pl-4 pr-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Category</th>
-                    <th className="py-2 px-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Budget</th>
-                    <th className="py-2 px-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Actual</th>
-                    <th className="py-2 pl-3 pr-4 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Variance</th>
-                  </tr></thead>
-                  <tbody className="divide-y divide-gray-50">
-                    {allCats.map(cat => {
-                      const b = budgetByCat[cat]||0;
-                      const a = spentByCat[cat]||0;
-                      const v = b - a;
-                      return (
-                        <tr key={cat} className="hover:bg-gray-50/80">
-                          <td className="py-2 pl-4 pr-3 text-sm text-gray-700 font-medium">{cat}</td>
-                          <td className="py-2 px-3 text-sm text-right text-gray-500 tabular-nums">{b>0?fmtUSD(b):"—"}</td>
-                          <td className="py-2 px-3 text-sm text-right text-gray-500 tabular-nums">{a>0?fmtUSD(a):"—"}</td>
-                          <td className={`py-2 pl-3 pr-4 text-sm text-right font-semibold tabular-nums ${v<0?"text-red-600":v>0?"text-emerald-600":"text-gray-400"}`}>
-                            {b>0||a>0 ? (v>=0?"+":"")+fmtUSD(v) : "—"}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
+              <table className="w-full">
+                <thead><tr className="border-b border-gray-100 bg-gray-50">
+                  <th className="py-2 pl-4 pr-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Category</th>
+                  <th className="py-2 px-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Budget</th>
+                  <th className="py-2 px-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Actual</th>
+                  <th className="py-2 px-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">% Done</th>
+                  <th className="py-2 px-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Projected</th>
+                  <th className="py-2 pl-3 pr-4 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Variance</th>
+                </tr></thead>
+                <CatTable title="Labor" rows={laborRows} spentByCat={spentByCat} catProgress={catProgress} onProgressChange={onProgressChange}/>
+                <CatTable title="Materials &amp; Allowances" rows={matRows} spentByCat={spentByCat} catProgress={catProgress} onProgressChange={onProgressChange}/>
+                <tfoot><tr className="border-t-2 border-gray-200 bg-gray-50/80">
+                  <td className="py-2.5 pl-4 text-xs font-bold text-gray-700 uppercase tracking-wider">Total</td>
+                  <td className="py-2.5 px-3 text-sm font-bold text-gray-900 text-right tabular-nums">{fmtUSD(budgetTotal)}</td>
+                  <td className="py-2.5 px-3 text-sm font-bold text-gray-900 text-right tabular-nums">{fmtUSD(totalSpent)}</td>
+                  <td className="py-2.5 px-3 text-xs text-right text-gray-400">{weightedPct.toFixed(0)}%</td>
+                  <td className="py-2.5 px-3 text-sm font-bold text-gray-900 text-right tabular-nums">{fmtUSD(Math.round(projectedTotal))}</td>
+                  <td className={`py-2.5 pl-3 pr-4 text-sm font-black text-right tabular-nums ${projectedVariance < 0 ? "text-red-600" : "text-emerald-600"}`}>
+                    {(projectedVariance >= 0 ? "+" : "") + fmtUSD(Math.round(projectedVariance))}
+                  </td>
+                </tr></tfoot>
+              </table>
             </div>
           )}
 
-          {/* Log a purchase */}
+          {/* Purchase log */}
           <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
             <div className="px-4 py-3 border-b border-gray-100 flex items-center justify-between">
               <p className="text-sm font-bold text-gray-900">Purchase Log</p>
@@ -841,7 +924,6 @@
                 <IconPlus c="w-3 h-3"/> Log Purchase
               </button>
             </div>
-
             {showForm && (
               <form onSubmit={handleAdd} className="px-4 py-4 border-b border-gray-100 bg-gray-50 grid grid-cols-2 gap-3">
                 <div>
@@ -882,7 +964,6 @@
                 </div>
               </form>
             )}
-
             {purchases.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-10 text-center px-4">
                 <IconTracker c="w-8 h-8 text-gray-200 mb-2"/>
@@ -940,13 +1021,14 @@
       const [instances,   setInstances]   = useState(saved?.instances   ?? []);
       const [rateOverrides, setRateOverrides] = useState(saved?.rateOverrides ?? {});
       const [purchases,   setPurchases]   = useState(saved?.purchases   ?? []);
+      const [catProgress, setCatProgress] = useState(saved?.catProgress ?? {});
       const [addingDef,   setAddingDef]   = useState(null);
       const [editingPair, setEditingPair] = useState(null);
       const [showSettings,setShowSettings]= useState(false);
       const [editingName, setEditingName] = useState(false);
       const [activeView,  setActiveView]  = useState("estimate"); // "estimate" | "tracker"
 
-      useEffect(() => { save({ settings, instances, rateOverrides, purchases }); }, [settings, instances, rateOverrides, purchases]);
+      useEffect(() => { save({ settings, instances, rateOverrides, purchases, catProgress }); }, [settings, instances, rateOverrides, purchases, catProgress]);
 
       const addAssembly = (def, inputs) => { setInstances(p=>[...p,{id:uid(),assemblyId:def.id,inputs}]); setAddingDef(null); };
       const updateAssembly = (id, inputs) => { setInstances(p=>p.map(i=>i.id===id?{...i,inputs}:i)); setEditingPair(null); };
@@ -1040,7 +1122,8 @@
             <div className="flex flex-1 overflow-hidden">
               <TrackerView
                 instances={instances} tier={tier} rateOverrides={rateOverrides} settings={settings}
-                purchases={purchases} onAddPurchase={addPurchase} onDeletePurchase={deletePurchase}/>
+                purchases={purchases} onAddPurchase={addPurchase} onDeletePurchase={deletePurchase}
+                catProgress={catProgress} onProgressChange={(cat, pct) => setCatProgress(p => ({...p, [cat]: pct}))}/>
             </div>
           )}
 
