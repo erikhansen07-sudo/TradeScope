@@ -198,8 +198,8 @@
             { key: "installCost",  label: "Install Cost / Unit ($)",   type: "number", required: false, default: 0 },
           ],
           lineItems: [
-            { customItem: { label: "Appliance Allowance",    unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
-            { customItem: { label: "Appliance Installation", unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
+            { customItem: { label: "Appliance Allowance",    unit: "EA", category: "Appliances" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
+            { customItem: { label: "Appliance Installation", unit: "EA", category: "Appliances" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
           ],
         },
         {
@@ -210,8 +210,8 @@
             { key: "installCost",  label: "Install Cost / Unit ($)", type: "number", required: false, default: 0 },
           ],
           lineItems: [
-            { customItem: { label: "Window Allowance",    unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
-            { customItem: { label: "Window Installation", unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
+            { customItem: { label: "Window Allowance",    unit: "EA", category: "Windows" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
+            { customItem: { label: "Window Installation", unit: "EA", category: "Windows" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
           ],
         },
         {
@@ -222,8 +222,8 @@
             { key: "installCost",  label: "Install Cost / Unit ($)",type: "number", required: false, default: 0 },
           ],
           lineItems: [
-            { customItem: { label: "Door & Hardware Allowance",    unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
-            { customItem: { label: "Door & Hardware Installation", unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
+            { customItem: { label: "Door & Hardware Allowance",    unit: "EA", category: "Doors & Hardware" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
+            { customItem: { label: "Door & Hardware Installation", unit: "EA", category: "Doors & Hardware" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
           ],
         },
         {
@@ -234,8 +234,8 @@
             { key: "installCost",  label: "Install Cost / Unit ($)",    type: "number", required: false, default: 0 },
           ],
           lineItems: [
-            { customItem: { label: "Plumbing Fixture Allowance",    unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
-            { customItem: { label: "Plumbing Fixture Installation", unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
+            { customItem: { label: "Plumbing Fixture Allowance",    unit: "EA", category: "Plumbing Fixtures" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
+            { customItem: { label: "Plumbing Fixture Installation", unit: "EA", category: "Plumbing Fixtures" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
           ],
         },
         {
@@ -246,8 +246,8 @@
             { key: "installCost",  label: "Install Cost / Unit ($)",    type: "number", required: false, default: 0 },
           ],
           lineItems: [
-            { customItem: { label: "Lighting Fixture Allowance",    unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
-            { customItem: { label: "Lighting Fixture Installation", unit: "EA", category: "Allowances" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
+            { customItem: { label: "Lighting Fixture Allowance",    unit: "EA", category: "Lighting & Fixtures" }, quantityFormula: "quantity", unitCostFormula: "materialCost" },
+            { customItem: { label: "Lighting Fixture Installation", unit: "EA", category: "Lighting & Fixtures" }, quantityFormula: "quantity", unitCostFormula: "installCost",  condition: "installCost > 0" },
           ],
         },
         {
@@ -258,8 +258,8 @@
             { key: "installCost",  label: "Install Cost / SF ($)",   type: "number", required: false, default: 0 },
           ],
           lineItems: [
-            { customItem: { label: "Countertop Material",    unit: "SF", category: "Allowances" }, quantityFormula: "squareFeet", unitCostFormula: "materialCost" },
-            { customItem: { label: "Countertop Installation",unit: "SF", category: "Allowances" }, quantityFormula: "squareFeet", unitCostFormula: "installCost",  condition: "installCost > 0" },
+            { customItem: { label: "Countertop Material",    unit: "SF", category: "Countertops" }, quantityFormula: "squareFeet", unitCostFormula: "materialCost" },
+            { customItem: { label: "Countertop Installation",unit: "SF", category: "Countertops" }, quantityFormula: "squareFeet", unitCostFormula: "installCost",  condition: "installCost > 0" },
           ],
         },
         {
@@ -269,7 +269,7 @@
             { key: "totalCost",    label: "Total Allowance ($)",     type: "number", required: true },
           ],
           lineItems: [
-            { customItem: { label: "General Allowance", unit: "LS", category: "Allowances" }, quantityFormula: "1", unitCostFormula: "totalCost" },
+            { customItem: { label: "General Allowance", unit: "LS", category: "General Allowance" }, quantityFormula: "1", unitCostFormula: "totalCost" },
           ],
         },
       ],
