@@ -578,7 +578,13 @@
           </div>
           {!collapsed && (
             <div className="overflow-x-auto">
-              <table className="w-full">
+              <table className="w-full" style={{tableLayout:"fixed"}}>
+                <colgroup>
+                  <col style={{width:"auto"}}/>
+                  <col style={{width:"130px"}}/>
+                  <col style={{width:"130px"}}/>
+                  <col style={{width:"110px"}}/>
+                </colgroup>
                 <thead><tr className="border-b border-gray-100">
                   <th className="py-2 pl-5 pr-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Description</th>
                   <th className="py-2 px-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Quantity</th>
