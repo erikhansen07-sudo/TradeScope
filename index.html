@@ -380,6 +380,7 @@
     const IconReset     = ({c}) => <Svg className={c||"w-3 h-3"}   d="M3 10a9 9 0 019-9m0 0v4m0-4L9 4m3-3l3 3m6 5a9 9 0 01-9 9m0 0v-4m0 4l-3-3m3 3l3-3"/>;
     const IconTracker   = ({c}) => <Svg className={c||"w-4 h-4"}   d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"/>;
     const IconEstimate  = ({c}) => <Svg className={c||"w-4 h-4"}   d="M9 7h6m0 10v-3m-3 3h.01M9 17h.01M9 14h.01M12 14h.01M15 11h.01M12 11h.01M9 11h.01M7 21h10a2 2 0 002-2V5a2 2 0 00-2-2H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>;
+    const IconPrint     = ({c}) => <Svg className={c||"w-4 h-4"}   d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm1-16h4a1 1 0 011 1v4H8V4a1 1 0 011-1z"/>;
 
     // =========================================================================
     // COMPONENTS
@@ -1038,6 +1039,122 @@
       const deletePurchase = id => setPurchases(prev=>prev.filter(p=>p.id!==id));
       const tier = settings.pricingTier;
 
+      const printEstimate = () => {
+        const allItems = instances.flatMap(inst => {
+          const def = DB.assemblies.find(a=>a.id===inst.assemblyId); if(!def) return [];
+          return computeLineItems(def, inst.inputs, tier, rateOverrides).map(li => ({...li, asmName: def.name, asmGroup: def.group}));
+        });
+        const direct = allItems.reduce((s,i)=>s+i.total,0);
+        const contingency = direct * settings.contingencyPct;
+        const base = direct + contingency;
+        const overhead = base * settings.overheadPct;
+        const profit = base * settings.profitPct;
+        const tax = direct * settings.salesTaxPct;
+        const total = base + overhead + profit + tax;
+        const fmt = n => new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:0,maximumFractionDigits:0}).format(n);
+        const fmt2 = n => new Intl.NumberFormat("en-US",{style:"currency",currency:"USD",minimumFractionDigits:2,maximumFractionDigits:2}).format(n);
+        const tierLabel = {low:"Low",mid:"Mid",high:"High"}[tier];
+        const date = new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
+
+        // Group items by assembly
+        const asmMap = {};
+        instances.forEach(inst => {
+          const def = DB.assemblies.find(a=>a.id===inst.assemblyId); if(!def) return;
+          const items = computeLineItems(def, inst.inputs, tier, rateOverrides);
+          if(!asmMap[inst.id]) asmMap[inst.id] = { name: def.name, group: def.group, items };
+        });
+
+        const asmRows = Object.values(asmMap).map(({name,group,items}) => {
+          const sub = items.reduce((s,i)=>s+i.total,0);
+          const liRows = items.map(li =>
+            `<tr><td>${li.label}<div class="cat">${li.category}</div></td><td class="num">${li.qty.toLocaleString()} ${li.unit}</td><td class="num">${fmt2(li.unitCost)}</td><td class="num total">${fmt(li.total)}</td></tr>`
+          ).join("");
+          return `
+            <div class="asm-block">
+              <div class="asm-header">
+                <span class="asm-name">${name}</span>
+                <span class="asm-group">${group}</span>
+                <span class="asm-sub">${fmt(sub)}</span>
+              </div>
+              <table>
+                <thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Unit Cost</th><th class="num">Total</th></tr></thead>
+                <tbody>${liRows}</tbody>
+              </table>
+            </div>`;
+        }).join("");
+
+        const summaryRows = [
+          ["Direct Costs", fmt(direct), false],
+          [`Contingency (${(settings.contingencyPct*100).toFixed(0)}%)`, fmt(contingency), false],
+          ["Cost w/ Contingency", fmt(base), true],
+          [`Overhead (${(settings.overheadPct*100).toFixed(0)}%)`, fmt(overhead), false],
+          [`Profit (${(settings.profitPct*100).toFixed(0)}%)`, fmt(profit), false],
+          ...(settings.salesTaxPct>0 ? [[`Sales Tax (${(settings.salesTaxPct*100).toFixed(0)}%)`, fmt(tax), false]] : []),
+        ].map(([l,v,b])=>`<tr class="${b?"subtotal":""}"><td>${l}</td><td class="num">${v}</td></tr>`).join("");
+
+        const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"/>
+        <title>${settings.projectName} — TradeScope Estimate</title>
+        <style>
+          * { box-sizing: border-box; margin: 0; padding: 0; }
+          body { font-family: system-ui, -apple-system, sans-serif; font-size: 11px; color: #111; background: #fff; padding: 32px 40px; }
+          .page-header { display: flex; justify-content: space-between; align-items: flex-start; padding-bottom: 16px; border-bottom: 2px solid #111; margin-bottom: 24px; }
+          .logo { font-size: 20px; font-weight: 900; letter-spacing: -0.5px; }
+          .logo span { color: #3b82f6; }
+          .meta { text-align: right; color: #555; font-size: 10px; line-height: 1.6; }
+          .meta .project { font-size: 15px; font-weight: 800; color: #111; margin-bottom: 2px; }
+          .tier-badge { display: inline-block; padding: 1px 7px; border-radius: 99px; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; background: #dbeafe; color: #1d4ed8; }
+          .asm-block { margin-bottom: 18px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; break-inside: avoid; }
+          .asm-header { display: flex; align-items: center; gap: 8px; padding: 7px 12px; background: #f9fafb; border-bottom: 1px solid #e5e7eb; }
+          .asm-name { font-weight: 700; font-size: 11.5px; flex: 1; }
+          .asm-group { font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 1px 6px; border-radius: 99px; background: #f3f4f6; color: #6b7280; }
+          .asm-sub { font-weight: 800; font-size: 12px; margin-left: auto; }
+          table { width: 100%; border-collapse: collapse; }
+          th { padding: 5px 10px; text-align: left; font-size: 9px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; color: #9ca3af; border-bottom: 1px solid #f3f4f6; }
+          td { padding: 5px 10px; border-bottom: 1px solid #f9fafb; vertical-align: top; }
+          tr:last-child td { border-bottom: none; }
+          .num { text-align: right; font-variant-numeric: tabular-nums; }
+          .total { font-weight: 600; }
+          .cat { font-size: 9px; color: #9ca3af; margin-top: 1px; }
+          .summary-section { margin-top: 28px; display: flex; justify-content: flex-end; }
+          .summary-box { width: 280px; border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; }
+          .summary-box table { width: 100%; }
+          .summary-box th { padding: 7px 12px; font-size: 10px; background: #f9fafb; }
+          .summary-box td { padding: 5px 12px; font-size: 11px; }
+          .summary-box tr.subtotal td { font-weight: 700; border-top: 1px solid #e5e7eb; padding-top: 7px; }
+          .grand-total { background: #111; }
+          .grand-total td { color: #fff; font-weight: 900; font-size: 14px; padding: 10px 12px; border: none; }
+          .footer { margin-top: 32px; padding-top: 12px; border-top: 1px solid #e5e7eb; color: #9ca3af; font-size: 9px; display: flex; justify-content: space-between; }
+          @media print { body { padding: 20px 28px; } .no-print { display: none; } }
+        </style>
+        </head><body>
+          <div class="page-header">
+            <div><div class="logo">Trade<span>Scope</span></div><div style="color:#9ca3af;font-size:10px;margin-top:3px;">San Diego, CA · Construction Estimator</div></div>
+            <div class="meta">
+              <div class="project">${settings.projectName}</div>
+              <div>${date}</div>
+              <div style="margin-top:4px;"><span class="tier-badge">${tierLabel} Pricing</span></div>
+            </div>
+          </div>
+          ${asmRows}
+          <div class="summary-section">
+            <div class="summary-box">
+              <table>
+                <thead><tr><th colspan="2">Cost Summary</th></tr></thead>
+                <tbody>${summaryRows}</tbody>
+                <tfoot><tr class="grand-total"><td>Total Sell Price</td><td class="num">${fmt(total)}</td></tr></tfoot>
+              </table>
+            </div>
+          </div>
+          <div class="footer">
+            <span>Generated by TradeScope · tradescope.app</span>
+            <span>${instances.length} assembl${instances.length===1?"y":"ies"} · ${tier} pricing tier</span>
+          </div>
+          <script>window.onload=()=>window.print();<\/script>
+        </body></html>`;
+
+        const w = window.open("","_blank"); w.document.write(html); w.document.close();
+      };
+
       return (
         <div className="h-screen flex flex-col bg-gray-50 overflow-hidden" style={{fontFamily:"system-ui,-apple-system,sans-serif"}}>
           {/* Header */}
@@ -1078,6 +1195,9 @@
               <div className="h-4 w-px bg-gray-700"/>
               {instances.length>0 && <>
                 <span className="text-xs text-gray-500 hidden sm:block">{instances.length} assembl{instances.length===1?"y":"ies"}</span>
+                <button onClick={printEstimate} className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white px-2 py-1 rounded hover:bg-gray-700 transition-colors hidden sm:flex" title="Print estimate">
+                  <IconPrint c="w-3.5 h-3.5"/> Print
+                </button>
                 <button onClick={()=>{ if(confirm("Clear all assemblies?")){ setInstances([]); setRateOverrides({}); }}} className="text-xs text-gray-500 hover:text-red-400 px-2 py-1 rounded hidden sm:block">Clear</button>
               </>}
               <div className="h-4 w-px bg-gray-700"/>
