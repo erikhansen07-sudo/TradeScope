@@ -352,7 +352,7 @@
     const GROUPS = ["Structural","Finishes","Demo","Ceilings","MEP","Specialties","Allowances"];
     const GROUP_COLOR = { Structural:"bg-slate-100 text-slate-700", Finishes:"bg-emerald-50 text-emerald-700", Demo:"bg-red-50 text-red-700", Ceilings:"bg-sky-50 text-sky-700", MEP:"bg-amber-50 text-amber-700", Specialties:"bg-purple-50 text-purple-700", Allowances:"bg-rose-50 text-rose-700" };
 
-    const PURCHASE_CATS = ["Appliances","Windows","Doors & Hardware","Plumbing Fixtures","Lighting & Fixtures","Countertops","Flooring","Tile","Drywall","Framing","Paint","Demo","HVAC","Electrical","Millwork","Restroom","Ceilings","Insulation","Other"];
+    const PURCHASE_CATS = [...DB.assemblies.map(a => a.name), "Other"];
 
     // =========================================================================
     // ICONS (inline SVG — no external dependency)
