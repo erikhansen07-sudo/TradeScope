@@ -1713,7 +1713,7 @@
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
               <div>
                 <h2 className="text-sm font-bold text-gray-800">Procurement Checklist</h2>
-                <p className="text-[11px] text-gray-400 mt-0.5">Only Material categories shown — add custom Material categories in Config.</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">Sub-assembly dropdown shows material-type assemblies — add custom ones in Config.</p>
               </div>
               <button onClick={addItem}
                 className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800 px-3 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors">
@@ -1748,7 +1748,7 @@
                     <th className={HDCELL}>Item</th>
                     <th className={HDCELL}>Vendor</th>
                     <th className={HDCELL}>Project</th>
-                    <th className={HDCELL}>Category</th>
+                    <th className={HDCELL}>Sub-Assembly</th>
                     <th className={HDCELL}>Date</th>
                     <th className={HDCELL + " text-right"}>Est. Amount</th>
                     <th className={HDCELL + " text-right"}>Actual Amount</th>
@@ -1796,10 +1796,11 @@
                         )}
                       </td>
 
-                      {/* Budget Category — material-only */}
+                      {/* Sub-Assembly — material-only sub-assemblies from estimate */}
                       <td className={CELL}>
                         <select value={item.category} onChange={e => updateItem(item.id, {category: e.target.value})}
                           className="w-full bg-transparent outline-none text-[11px] text-gray-600 focus:ring-0 cursor-pointer truncate">
+                          <option value="">— Select —</option>
                           {matCats.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                       </td>
