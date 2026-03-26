@@ -1032,6 +1032,17 @@
       const [addingTaskFor, setAddingTaskFor] = useState(null);
       const [newTaskName, setNewTaskName] = useState("");
       const [collapsed, setCollapsed] = useState({});
+      // dragLive: live override while dragging — avoids writing planData/localStorage on every mousemove
+      const [dragLive, setDragLive] = useState(null); // {taskId, startDate?, durationDays?}
+
+      // Refs so document handlers always have fresh data without re-registering
+      const draggingRef = React.useRef(null);
+      const dragLiveRef = React.useRef(null);
+      const planDataRef = React.useRef(planData);
+      const onPlanChangeRef = React.useRef(onPlanChange);
+      React.useEffect(() => { planDataRef.current = planData; }, [planData]);
+      React.useEffect(() => { onPlanChangeRef.current = onPlanChange; }, [onPlanChange]);
+      React.useEffect(() => { dragLiveRef.current = dragLive; }, [dragLive]);
 
       const today = new Date(); today.setHours(0,0,0,0);
       const todayStr = today.toISOString().split("T")[0];
@@ -1082,6 +1093,71 @@
         onPlanChange({ ...planData, tasks: [...tasks, {id:uid(), projectId:pid, name:newTaskName.trim(), startDate:todayStr, durationDays:7, status:"not_started"}] });
         setNewTaskName(""); setAddingTaskFor(null);
       };
+
+      // ── Drag / resize ──────────────────────────────────────────────────────
+      // Register document-level handlers once; read state via refs to avoid stale closures
+      React.useEffect(() => {
+        const idxToDate = (idx, capturedMin) => {
+          const d = new Date(capturedMin);
+          d.setDate(d.getDate() + idx);
+          return d.toISOString().split("T")[0];
+        };
+
+        const onMove = (e) => {
+          const drag = draggingRef.current;
+          if (!drag) return;
+          const deltaPx = e.clientX - drag.startX;
+          const deltaDays = Math.round(deltaPx / DAY_W);
+          if (drag.type === "move") {
+            const newIdx = drag.origStartIdx + deltaDays;
+            const newDate = idxToDate(newIdx, drag.capturedMin);
+            setDragLive({ taskId: drag.taskId, startDate: newDate });
+          } else {
+            const newDur = Math.max(1, drag.origDur + deltaDays);
+            setDragLive({ taskId: drag.taskId, durationDays: newDur });
+          }
+        };
+
+        const onUp = () => {
+          const drag = draggingRef.current;
+          const live = dragLiveRef.current;
+          if (drag && live) {
+            const pd = planDataRef.current;
+            onPlanChangeRef.current({
+              ...pd,
+              tasks: pd.tasks.map(t => t.id === drag.taskId ? {...t, ...live} : t)
+            });
+          }
+          draggingRef.current = null;
+          setDragLive(null);
+        };
+
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+        return () => {
+          document.removeEventListener("mousemove", onMove);
+          document.removeEventListener("mouseup", onUp);
+        };
+      }, []); // register once
+
+      const startDrag = (e, task, type, capturedMinDate) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const startIdx = Math.round((new Date(task.startDate + "T00:00:00") - capturedMinDate) / 86400000);
+        draggingRef.current = {
+          taskId: task.id,
+          type,
+          startX: e.clientX,
+          origStartIdx: startIdx,
+          origDur: Math.max(1, task.durationDays || 1),
+          capturedMin: new Date(capturedMinDate),
+        };
+        setDragLive(type === "move"
+          ? { taskId: task.id, startDate: task.startDate }
+          : { taskId: task.id, durationDays: Math.max(1, task.durationDays || 1) }
+        );
+      };
+      // ───────────────────────────────────────────────────────────────────────
 
       // Shared day-column background renderer (weekend shading + grid lines + today marker)
       const DayBg = ({ h }) => (
@@ -1228,10 +1304,19 @@
                     {!isCol && projTasks.map(task => {
                       const sc = TASK_STATUS_CFG[task.status] || TASK_STATUS_CFG.not_started;
                       const barColor = task.status==="done" ? "#10b981" : task.status==="in_progress" ? color : "#d1d5db";
-                      const startI = dayIdx(task.startDate);
-                      const dur = Math.max(1, task.durationDays||1);
+
+                      // Use live drag values if this task is being dragged
+                      const isActiveDrag = dragLive && dragLive.taskId === task.id;
+                      const liveStart = isActiveDrag && dragLive.startDate ? dragLive.startDate : task.startDate;
+                      const liveDur   = isActiveDrag && dragLive.durationDays ? dragLive.durationDays : Math.max(1, task.durationDays||1);
+
+                      const startI = dayIdx(liveStart);
+                      const barW   = Math.max(DAY_W, liveDur * DAY_W - 2);
+                      const isDraggingThis = isActiveDrag;
+
                       return (
-                        <div key={task.id} className="flex border-b border-gray-100 bg-white hover:bg-blue-50/30 group/row" style={{height:ROW_H}}>
+                        <div key={task.id} className="flex border-b border-gray-100 bg-white hover:bg-blue-50/30 group/row"
+                          style={{height:ROW_H, userSelect: isDraggingThis ? "none" : "auto"}}>
                           {/* LEFT — single line, sticky */}
                           <div className="flex items-center gap-1.5 pl-7 pr-1.5 border-r border-gray-100 flex-shrink-0 bg-white"
                             style={{width:PLAN_LEFT_W, position:"sticky", left:0, zIndex:10}}>
@@ -1242,11 +1327,11 @@
                               style={{background:sc.bg, color:sc.color, maxWidth:76}}>
                               {Object.entries(TASK_STATUS_CFG).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
                             </select>
-                            <input type="date" value={task.startDate||todayStr}
+                            <input type="date" value={liveStart||todayStr}
                               onChange={e=>upTask(task.id,{startDate:e.target.value})}
                               className="text-[9px] text-gray-500 border border-gray-200 rounded px-0.5 py-0.5 focus:outline-none focus:ring-1 focus:ring-blue-400 flex-shrink-0"
                               style={{width:82}}/>
-                            <input type="number" min="1" max="999" value={task.durationDays||7}
+                            <input type="number" min="1" max="999" value={liveDur}
                               onChange={e=>upTask(task.id,{durationDays:Math.max(1,parseInt(e.target.value)||1)})}
                               className="text-[9px] text-gray-500 border border-gray-200 rounded px-0.5 py-0.5 text-center focus:outline-none focus:ring-1 focus:ring-blue-400 flex-shrink-0"
                               style={{width:28}}/>
@@ -1259,18 +1344,38 @@
                           {/* GANTT BAR */}
                           <div className="relative flex-shrink-0 flex items-center" style={{width:totalW}}>
                             <DayBg h={ROW_H}/>
-                            <div className="absolute rounded flex items-center px-1.5"
+                            {/* Bar — draggable body */}
+                            <div
+                              className="absolute rounded flex items-center overflow-hidden select-none"
+                              onMouseDown={e => startDrag(e, {...task, startDate:liveStart, durationDays:liveDur}, "move", minDate)}
                               style={{
-                                height:20,
-                                left: Math.max(0, startI)*DAY_W,
-                                width: Math.max(4, dur*DAY_W - 2),
+                                height: 22,
+                                left: startI * DAY_W,
+                                width: barW,
                                 background: barColor,
-                                opacity: task.status==="done" ? 0.65 : 0.88,
-                                zIndex:1
+                                opacity: isDraggingThis ? 1 : task.status==="done" ? 0.65 : 0.88,
+                                cursor: "grab",
+                                zIndex: isDraggingThis ? 20 : 1,
+                                boxShadow: isDraggingThis ? "0 4px 12px rgba(0,0,0,0.25)" : "none",
+                                transition: isDraggingThis ? "none" : "box-shadow 0.15s",
                               }}>
-                              {dur*DAY_W > 44 && (
-                                <span className="text-[9px] font-semibold text-white truncate whitespace-nowrap">{task.name}</span>
-                              )}
+                              {/* Label */}
+                              <span className="flex-1 min-w-0 text-[9px] font-semibold text-white truncate whitespace-nowrap px-1.5 pointer-events-none">
+                                {barW > 44 ? task.name : ""}
+                              </span>
+                              {/* Resize handle — right edge */}
+                              <div
+                                onMouseDown={e => startDrag(e, {...task, startDate:liveStart, durationDays:liveDur}, "resize", minDate)}
+                                style={{
+                                  position:"absolute", right:0, top:0, bottom:0, width:7,
+                                  cursor:"ew-resize",
+                                  background:"rgba(255,255,255,0.25)",
+                                  borderLeft:"1px solid rgba(255,255,255,0.35)",
+                                  display:"flex", alignItems:"center", justifyContent:"center",
+                                  flexShrink:0,
+                                }}>
+                                <div style={{width:2, height:10, borderLeft:"1.5px solid rgba(255,255,255,0.7)", borderRight:"1.5px solid rgba(255,255,255,0.7)"}}/>
+                              </div>
                             </div>
                           </div>
                         </div>
