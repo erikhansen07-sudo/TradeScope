@@ -337,9 +337,31 @@
     // =========================================================================
     // STORAGE
     // =========================================================================
-    const SK = "tradescope_v2";
-    const load = () => { try { const r = localStorage.getItem(SK); return r ? JSON.parse(r) : null; } catch(e) { return null; } };
-    const save = d => { try { localStorage.setItem(SK, JSON.stringify(d)); } catch(e) {} };
+    // Legacy single-project key (v2) — used only for one-time migration
+    const SK_V2 = "tradescope_v2";
+    // Multi-project key (v3)
+    const SK_V3 = "tradescope_v3";
+    const loadAppData = () => {
+      try { const r = localStorage.getItem(SK_V3); if (r) return JSON.parse(r); } catch(e) {}
+      // Migrate from v2
+      try {
+        const r2 = localStorage.getItem(SK_V2); if (!r2) return null;
+        const v2 = JSON.parse(r2);
+        return { activeProjectId: null, projects: [{
+          id: "proj_migrated",
+          createdAt: new Date().toISOString(),
+          settings:      v2.settings      ?? {...DEFAULT_SETTINGS},
+          instances:     v2.instances     ?? [],
+          rateOverrides: v2.rateOverrides ?? {},
+          purchases:     v2.purchases     ?? [],
+          catProgress:   v2.catProgress   ?? {},
+          planData:      v2.planData      ?? { projects:[], tasks:[] },
+          procurement:   v2.procurement   ?? [],
+        }]};
+      } catch(e) {}
+      return null;
+    };
+    const saveAppData = d => { try { localStorage.setItem(SK_V3, JSON.stringify(d)); } catch(e) {} };
 
     // =========================================================================
     // UTILS
@@ -1645,26 +1667,210 @@
     }
 
     // =========================================================================
-    // MAIN APP
+    // SHARED DEFAULTS
     // =========================================================================
     const DEFAULT_SETTINGS = { projectName:"New Estimate", pricingTier:"mid", salesTaxPct:0, contingencyPct:0.1, overheadPct:0.1, profitPct:0.1 };
+    const BLANK_PROJECT = (name) => ({
+      id: uid(), createdAt: new Date().toISOString(),
+      settings: {...DEFAULT_SETTINGS, projectName: name || "New Project"},
+      instances: [], rateOverrides: {}, purchases: [], catProgress: {},
+      planData: { projects:[], tasks:[] }, procurement: [],
+    });
 
-    function TradeScope() {
-      const saved = load();
-      const [settings,    setSettings]    = useState(saved?.settings    ?? {...DEFAULT_SETTINGS});
-      const [instances,   setInstances]   = useState(saved?.instances   ?? []);
-      const [rateOverrides, setRateOverrides] = useState(saved?.rateOverrides ?? {});
-      const [purchases,   setPurchases]   = useState(saved?.purchases   ?? []);
-      const [catProgress, setCatProgress] = useState(saved?.catProgress ?? {});
-      const [planData,    setPlanData]    = useState(saved?.planData    ?? { projects:[], tasks:[] });
-      const [procurement, setProcurement] = useState(saved?.procurement ?? []);
+    // =========================================================================
+    // HOME VIEW (project dashboard)
+    // =========================================================================
+    const CARD_COLORS = ["#3b82f6","#8b5cf6","#10b981","#f59e0b","#f43f5e","#06b6d4","#f97316","#ec4899"];
+
+    function HomeView({ projects, onOpen, onAdd, onDelete }) {
+      const [showNew, setShowNew] = useState(false);
+      const [newName, setNewName] = useState("");
+
+      const doAdd = () => {
+        if (!newName.trim()) return;
+        onAdd(newName.trim());
+        setNewName(""); setShowNew(false);
+      };
+
+      const getStats = (proj) => {
+        const tier = proj.settings?.pricingTier ?? "mid";
+        const budget = (proj.instances ?? []).flatMap(inst => {
+          const def = DB.assemblies.find(a => a.id === inst.assemblyId);
+          if (!def) return [];
+          return computeLineItems(def, inst.inputs, tier, proj.rateOverrides ?? {});
+        }).reduce((s, li) => s + li.total, 0);
+        const spent = (proj.purchases ?? []).reduce((s, p) => s + (p.amount||0), 0);
+        const tasks = proj.planData?.tasks ?? [];
+        let planStart = null, planEnd = null;
+        tasks.forEach(t => {
+          if (!t.startDate) return;
+          const s = new Date(t.startDate + "T00:00:00");
+          const e = new Date(s); e.setDate(e.getDate() + Math.max(1, t.durationDays||1));
+          if (!planStart || s < planStart) planStart = s;
+          if (!planEnd || e > planEnd) planEnd = e;
+        });
+        const pendingProc = (proj.procurement ?? []).filter(p => !p.purchased).length;
+        const created = proj.createdAt
+          ? new Date(proj.createdAt).toLocaleDateString("en-US", {month:"short", day:"numeric", year:"numeric"})
+          : "";
+        return { budget, spent, planStart, planEnd, pendingProc, created };
+      };
+
+      const fmt = (d, opts) => d ? d.toLocaleDateString("en-US", opts) : "";
+
+      return (
+        <div className="min-h-screen" style={{background:"#f1f5f9", fontFamily:"system-ui,-apple-system,sans-serif"}}>
+          {/* Header */}
+          <div className="bg-gray-900 text-white px-8 py-4 flex items-center gap-3 shadow-lg">
+            <IconBuilding c="w-6 h-6 text-blue-400"/>
+            <span className="font-black text-xl tracking-tight">TradeScope</span>
+            <span className="text-gray-500 text-sm">· San Diego, CA</span>
+            <div className="flex-1"/>
+            <button onClick={()=>setShowNew(true)}
+              className="flex items-center gap-2 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg transition-colors">
+              <IconPlus c="w-4 h-4"/> New Project
+            </button>
+          </div>
+
+          {/* Content */}
+          <div className="px-8 py-8 max-w-7xl mx-auto">
+            <h1 className="text-2xl font-bold text-gray-900 mb-0.5">Projects</h1>
+            <p className="text-sm text-gray-400 mb-7">{projects.length} project{projects.length!==1?"s":""} · TradeScope Construction Estimator</p>
+
+            {projects.length === 0 ? (
+              <div className="bg-white rounded-2xl border border-gray-200 py-28 text-center">
+                <div className="w-16 h-16 bg-blue-50 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                  <IconBuilding c="w-8 h-8 text-blue-300"/>
+                </div>
+                <h3 className="text-lg font-bold text-gray-400 mb-2">No projects yet</h3>
+                <p className="text-sm text-gray-400 mb-6">Create your first project to get started.</p>
+                <button onClick={()=>setShowNew(true)}
+                  className="inline-flex items-center gap-2 px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors">
+                  <IconPlus c="w-4 h-4"/> New Project
+                </button>
+              </div>
+            ) : (
+              <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fill, minmax(340px, 1fr))", gap:20}}>
+                {projects.map((proj, pi) => {
+                  const color = CARD_COLORS[pi % CARD_COLORS.length];
+                  const s = getStats(proj);
+                  const pct = s.budget > 0 ? Math.min(100, s.spent / s.budget * 100) : 0;
+                  const barColor = pct > 90 ? "#ef4444" : pct > 70 ? "#f59e0b" : color;
+                  const planLabel = s.planStart
+                    ? `${fmt(s.planStart,{month:"short",day:"numeric"})} → ${fmt(s.planEnd,{month:"short",day:"numeric",year:"numeric"})}`
+                    : null;
+                  return (
+                    <div key={proj.id} onClick={()=>onOpen(proj.id)}
+                      className="bg-white rounded-2xl border border-gray-200 overflow-hidden cursor-pointer hover:shadow-xl hover:border-gray-300 transition-all group relative"
+                      style={{borderTop:`4px solid ${color}`}}>
+                      <div className="p-5">
+                        {/* Title row */}
+                        <div className="flex items-start justify-between gap-2 mb-4">
+                          <div>
+                            <h3 className="font-bold text-gray-900 text-lg leading-tight">{proj.settings?.projectName || "Untitled"}</h3>
+                            <p className="text-[11px] text-gray-400 mt-0.5">Created {s.created}</p>
+                          </div>
+                          <button onClick={e=>{e.stopPropagation();onDelete(proj.id);}}
+                            className="p-1.5 text-gray-200 hover:text-red-400 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                            <IconTrash c="w-4 h-4"/>
+                          </button>
+                        </div>
+
+                        {/* Budget + Spent */}
+                        <div className="grid grid-cols-2 gap-3 mb-4">
+                          <div className="bg-gray-50 rounded-xl p-3">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Budget</div>
+                            <div className="text-xl font-bold text-gray-900 tabular-nums">{fmtUSD(s.budget)}</div>
+                          </div>
+                          <div className="bg-gray-50 rounded-xl p-3">
+                            <div className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">Spent</div>
+                            <div className="text-xl font-bold tabular-nums" style={{color: pct>90?"#ef4444":pct>70?"#f59e0b":"#059669"}}>{fmtUSD(s.spent)}</div>
+                          </div>
+                        </div>
+
+                        {/* Burn bar */}
+                        {s.budget > 0 && (
+                          <div className="mb-4">
+                            <div className="flex justify-between text-[10px] text-gray-400 mb-1.5">
+                              <span>Budget utilized</span><span className="font-semibold">{pct.toFixed(0)}%</span>
+                            </div>
+                            <div className="h-1.5 bg-gray-100 rounded-full overflow-hidden">
+                              <div style={{width:`${pct}%`, background:barColor, height:"100%", borderRadius:9999, transition:"width .3s"}}/>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Chips */}
+                        <div className="flex flex-wrap gap-1.5">
+                          {planLabel && <span className="text-[10px] bg-blue-50 text-blue-600 px-2 py-1 rounded-full font-semibold">📅 {planLabel}</span>}
+                          {s.pendingProc>0 && <span className="text-[10px] bg-amber-50 text-amber-600 px-2 py-1 rounded-full font-semibold">🛒 {s.pendingProc} pending</span>}
+                          {(proj.instances?.length??0)>0 && <span className="text-[10px] bg-gray-100 text-gray-500 px-2 py-1 rounded-full font-semibold">{proj.instances.length} assembl{proj.instances.length===1?"y":"ies"}</span>}
+                          {(proj.procurement?.length??0)>0 && <span className="text-[10px] bg-emerald-50 text-emerald-600 px-2 py-1 rounded-full font-semibold">✓ {proj.procurement.filter(p=>p.purchased).length}/{proj.procurement.length} procured</span>}
+                        </div>
+                      </div>
+                      {/* Arrow */}
+                      <div className="absolute bottom-4 right-4 text-gray-200 group-hover:text-gray-400 transition-colors">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7"/></svg>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {/* New project card */}
+                <div onClick={()=>setShowNew(true)}
+                  className="bg-white rounded-2xl border-2 border-dashed border-gray-200 hover:border-blue-300 hover:bg-blue-50/30 cursor-pointer transition-all flex flex-col items-center justify-center py-14 group"
+                  style={{minHeight:200}}>
+                  <div className="w-10 h-10 bg-gray-100 group-hover:bg-blue-100 rounded-xl flex items-center justify-center mb-3 transition-colors">
+                    <IconPlus c="w-5 h-5 text-gray-400 group-hover:text-blue-500"/>
+                  </div>
+                  <span className="text-sm font-semibold text-gray-400 group-hover:text-blue-500 transition-colors">New Project</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* New project modal */}
+          {showNew && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50" onClick={()=>{setShowNew(false);setNewName("");}}>
+              <div className="bg-white rounded-2xl shadow-2xl p-6 w-full max-w-sm mx-4" onClick={e=>e.stopPropagation()}>
+                <h2 className="text-lg font-bold text-gray-900 mb-1">New Project</h2>
+                <p className="text-sm text-gray-400 mb-4">Give your project a name to get started.</p>
+                <input autoFocus type="text" value={newName} placeholder="e.g. 123 Main St — Retail TI"
+                  onChange={e=>setNewName(e.target.value)}
+                  onKeyDown={e=>{if(e.key==="Enter")doAdd();if(e.key==="Escape"){setShowNew(false);setNewName("");}}}
+                  className="w-full px-3 py-2.5 border border-gray-300 rounded-xl text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent mb-4"/>
+                <div className="flex gap-2">
+                  <button onClick={doAdd} className="flex-1 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors">Create</button>
+                  <button onClick={()=>{setShowNew(false);setNewName("");}} className="flex-1 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-sm font-semibold rounded-xl transition-colors">Cancel</button>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    // =========================================================================
+    // PROJECT VIEW (was: main app — now per-project)
+    // =========================================================================
+
+    function TradeScope({ initialData, onUpdate, onGoHome, onSwitchProject, allProjects }) {
+      const [settings,    setSettings]    = useState(initialData?.settings    ?? {...DEFAULT_SETTINGS});
+      const [instances,   setInstances]   = useState(initialData?.instances   ?? []);
+      const [rateOverrides, setRateOverrides] = useState(initialData?.rateOverrides ?? {});
+      const [purchases,   setPurchases]   = useState(initialData?.purchases   ?? []);
+      const [catProgress, setCatProgress] = useState(initialData?.catProgress ?? {});
+      const [planData,    setPlanData]    = useState(initialData?.planData    ?? { projects:[], tasks:[] });
+      const [procurement, setProcurement] = useState(initialData?.procurement ?? []);
       const [addingDef,   setAddingDef]   = useState(null);
       const [editingPair, setEditingPair] = useState(null);
       const [showSettings,setShowSettings]= useState(false);
       const [editingName, setEditingName] = useState(false);
       const [activeView,  setActiveView]  = useState("estimate"); // "estimate" | "tracker" | "plan" | "procurement"
 
-      useEffect(() => { save({ settings, instances, rateOverrides, purchases, catProgress, planData, procurement }); }, [settings, instances, rateOverrides, purchases, catProgress, planData, procurement]);
+      useEffect(() => {
+        onUpdate({ settings, instances, rateOverrides, purchases, catProgress, planData, procurement });
+      }, [settings, instances, rateOverrides, purchases, catProgress, planData, procurement]);
 
       const addAssembly = (def, inputs) => { setInstances(p=>[...p,{id:uid(),assemblyId:def.id,inputs}]); setAddingDef(null); };
       const updateAssembly = (id, inputs) => { setInstances(p=>p.map(i=>i.id===id?{...i,inputs}:i)); setEditingPair(null); };
@@ -1794,24 +2000,34 @@
       return (
         <div className="h-screen flex flex-col bg-gray-50 overflow-hidden" style={{fontFamily:"system-ui,-apple-system,sans-serif"}}>
           {/* Header */}
-          <header className="bg-gray-900 text-white flex items-center gap-4 px-5 py-2.5 flex-shrink-0 shadow-lg z-10">
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <IconBuilding c="w-5 h-5 text-blue-400"/>
-              <span className="font-black text-base tracking-tight">TradeScope</span>
-              <span className="text-gray-600 text-xs">· San Diego, CA</span>
-            </div>
-            <div className="h-4 w-px bg-gray-700"/>
+          <header className="bg-gray-900 text-white flex items-center gap-3 px-4 py-2.5 flex-shrink-0 shadow-lg z-10">
+            {/* Back to home */}
+            <button onClick={onGoHome} className="flex items-center gap-1.5 text-xs text-gray-400 hover:text-white px-2 py-1.5 rounded-lg hover:bg-gray-700 transition-colors flex-shrink-0" title="All Projects">
+              <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M15 19l-7-7 7-7"/></svg>
+              Projects
+            </button>
+            <div className="h-4 w-px bg-gray-700 flex-shrink-0"/>
+            <IconBuilding c="w-4 h-4 text-blue-400 flex-shrink-0"/>
+            {/* Project name (editable) */}
             {editingName ? (
               <input autoFocus type="text" value={settings.projectName}
                 onChange={e=>setSettings(s=>({...s,projectName:e.target.value}))}
                 onBlur={()=>setEditingName(false)}
                 onKeyDown={e=>{if(e.key==="Enter"||e.key==="Escape")setEditingName(false);}}
-                className="bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 outline-none w-52"/>
+                className="bg-gray-800 text-white text-sm px-2 py-1 rounded border border-gray-600 outline-none w-52 flex-shrink-0"/>
             ) : (
-              <button onClick={()=>setEditingName(true)} className="flex items-center gap-1.5 text-sm text-gray-300 hover:text-white group">
-                <span>{settings.projectName}</span>
-                <IconEdit c="w-3 h-3 text-gray-600 group-hover:text-gray-400"/>
+              <button onClick={()=>setEditingName(true)} className="flex items-center gap-1.5 text-sm font-semibold text-white hover:text-blue-300 group flex-shrink-0 max-w-xs">
+                <span className="truncate">{settings.projectName}</span>
+                <IconEdit c="w-3 h-3 text-gray-600 group-hover:text-blue-400 flex-shrink-0"/>
               </button>
+            )}
+            {/* Project switcher */}
+            {allProjects.length > 1 && (
+              <select onChange={e=>onSwitchProject(e.target.value)} value={initialData?.id ?? ""}
+                onClick={e=>e.stopPropagation()}
+                className="bg-gray-800 text-gray-400 text-xs border border-gray-700 rounded-lg px-2 py-1 outline-none focus:ring-1 focus:ring-blue-500 cursor-pointer flex-shrink-0">
+                {allProjects.map(p => <option key={p.id} value={p.id}>{p.settings?.projectName || "Untitled"}</option>)}
+              </select>
             )}
             <div className="flex-1"/>
 
@@ -1911,7 +2127,52 @@
       );
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<TradeScope/>);
+    // =========================================================================
+    // APP ROOT — manages project list + active project
+    // =========================================================================
+    function App() {
+      const [appData, setAppData] = useState(() => {
+        const loaded = loadAppData();
+        return loaded ?? { activeProjectId: null, projects: [] };
+      });
+
+      useEffect(() => { saveAppData(appData); }, [appData]);
+
+      const { activeProjectId, projects } = appData;
+      const activeProject = projects.find(p => p.id === activeProjectId) ?? null;
+
+      const openProject  = id  => setAppData(d => ({...d, activeProjectId: id}));
+      const goHome       = ()  => setAppData(d => ({...d, activeProjectId: null}));
+      const addProject   = name => {
+        const p = BLANK_PROJECT(name);
+        setAppData(d => ({...d, projects:[...d.projects, p], activeProjectId: p.id}));
+      };
+      const deleteProject = id => {
+        if (!confirm("Delete this project? This cannot be undone.")) return;
+        setAppData(d => ({
+          ...d,
+          projects: d.projects.filter(p => p.id !== id),
+          activeProjectId: d.activeProjectId === id ? null : d.activeProjectId,
+        }));
+      };
+      const updateProject = (id, data) => {
+        setAppData(d => ({...d, projects: d.projects.map(p => p.id === id ? {...p, ...data} : p)}));
+      };
+
+      if (!activeProject) {
+        return <HomeView projects={projects} onOpen={openProject} onAdd={addProject} onDelete={deleteProject}/>;
+      }
+      return <TradeScope
+        key={activeProjectId}
+        initialData={activeProject}
+        onUpdate={data => updateProject(activeProjectId, data)}
+        onGoHome={goHome}
+        onSwitchProject={openProject}
+        allProjects={projects}
+      />;
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
   </script>
 </body>
 </html>
