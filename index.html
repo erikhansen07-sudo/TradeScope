@@ -1402,6 +1402,249 @@
     }
 
     // =========================================================================
+    // PROCUREMENT VIEW
+    // =========================================================================
+    function ProcurementView({ procurement, onProcurementChange, purchases, onAddPurchase, onDeletePurchase, planData }) {
+      const todayStr = new Date().toISOString().split("T")[0];
+      const projects = planData?.projects ?? [];
+
+      // ── helpers ────────────────────────────────────────────────────────────
+      const syncPurchaseEntry = (item, overrides, allProc, addPurchase, deletePurchase) => {
+        // delete old entry if exists, re-create with fresh data
+        if (item.purchaseId) deletePurchase(item.purchaseId);
+        const merged = {...item, ...overrides};
+        if (!merged.purchased) return { purchaseId: null };
+        const newId = uid();
+        addPurchase({
+          id: newId,
+          date: merged.purchaseDate || todayStr,
+          category: merged.category,
+          vendor: merged.vendor || "—",
+          description: merged.item || "Procurement item",
+          amount: parseFloat(merged.amount) || 0,
+        });
+        return { purchaseId: newId };
+      };
+
+      const updateItem = (id, changes) => {
+        const current = procurement.find(p => p.id === id);
+        if (!current) return;
+        let extra = {};
+        if (current.purchased) {
+          extra = syncPurchaseEntry(current, changes, procurement, onAddPurchase, onDeletePurchase);
+        }
+        onProcurementChange(procurement.map(p => p.id === id ? {...p, ...changes, ...extra} : p));
+      };
+
+      const togglePurchased = (item) => {
+        if (!item.purchased) {
+          // Mark as purchased
+          const extra = syncPurchaseEntry({...item, purchased:true}, {}, procurement, onAddPurchase, onDeletePurchase);
+          onProcurementChange(procurement.map(p => p.id === item.id
+            ? {...p, purchased:true, purchaseDate: p.purchaseDate || todayStr, ...extra} : p));
+        } else {
+          // Unmark
+          if (item.purchaseId) onDeletePurchase(item.purchaseId);
+          onProcurementChange(procurement.map(p => p.id === item.id
+            ? {...p, purchased:false, purchaseId:null} : p));
+        }
+      };
+
+      const addItem = () => {
+        onProcurementChange([...procurement, {
+          id: uid(), item:"", vendor:"", project:"",
+          category: PURCHASE_CATS[0], purchased:false,
+          purchaseDate:"", amount:"", purchaseId:null,
+        }]);
+      };
+
+      const deleteItem = (id) => {
+        const item = procurement.find(p => p.id === id);
+        if (item?.purchaseId) onDeletePurchase(item.purchaseId);
+        onProcurementChange(procurement.filter(p => p.id !== id));
+      };
+
+      // ── summary stats ───────────────────────────────────────────────────────
+      const pending   = procurement.filter(p => !p.purchased);
+      const purchased = procurement.filter(p =>  p.purchased);
+      const totalBudgeted = procurement.reduce((s,p) => s + (parseFloat(p.amount)||0), 0);
+      const totalSpent    = purchased.reduce((s,p)   => s + (parseFloat(p.amount)||0), 0);
+
+      const CELL = "px-3 py-2 text-[11px] text-gray-600 border-t border-gray-100";
+      const HDCELL = "px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400 bg-gray-50 text-left whitespace-nowrap";
+
+      return (
+        <div className="flex-1 overflow-auto p-6" style={{background:"#f9fafb"}}>
+
+          {/* Summary cards */}
+          <div className="grid grid-cols-5 gap-3 mb-5">
+            {[
+              {label:"Total Items",  val:procurement.length,  fmt:false, color:"text-gray-900"},
+              {label:"Pending",      val:pending.length,      fmt:false, color:"text-amber-600"},
+              {label:"Purchased",    val:purchased.length,    fmt:false, color:"text-emerald-600"},
+              {label:"Budgeted",     val:totalBudgeted,       fmt:true,  color:"text-gray-900"},
+              {label:"Spent",        val:totalSpent,          fmt:true,  color:"text-blue-700"},
+            ].map(({label,val,fmt,color}) => (
+              <div key={label} className="bg-white rounded-xl p-4 border border-gray-200">
+                <div className="text-[11px] text-gray-400 mb-1">{label}</div>
+                <div className={`text-xl font-bold tabular-nums ${color}`}>
+                  {fmt ? fmtUSD(val) : val}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Checklist table */}
+          <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
+              <div>
+                <h2 className="text-sm font-bold text-gray-800">Procurement Checklist</h2>
+                <p className="text-[11px] text-gray-400 mt-0.5">Check an item off to automatically log it to the Tracker.</p>
+              </div>
+              <button onClick={addItem}
+                className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800 px-3 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors">
+                <IconPlus c="w-3.5 h-3.5"/> Add Item
+              </button>
+            </div>
+
+            {procurement.length === 0 ? (
+              <div className="py-20 text-center">
+                <div className="w-12 h-12 bg-gray-100 rounded-xl flex items-center justify-center mx-auto mb-3">
+                  <IconBuilding c="w-6 h-6 text-gray-300"/>
+                </div>
+                <p className="text-sm font-medium text-gray-400">No items yet</p>
+                <p className="text-xs text-gray-400 mt-1">Click "Add Item" to start your procurement list.</p>
+              </div>
+            ) : (
+              <table className="w-full" style={{tableLayout:"fixed"}}>
+                <colgroup>
+                  <col style={{width:"4%"}}/>
+                  <col style={{width:"20%"}}/>
+                  <col style={{width:"14%"}}/>
+                  <col style={{width:"13%"}}/>
+                  <col style={{width:"17%"}}/>
+                  <col style={{width:"13%"}}/>
+                  <col style={{width:"13%"}}/>
+                  <col style={{width:"6%"}}/>
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th className={HDCELL}></th>
+                    <th className={HDCELL}>Item</th>
+                    <th className={HDCELL}>Vendor</th>
+                    <th className={HDCELL}>Project</th>
+                    <th className={HDCELL}>Budget Category</th>
+                    <th className={HDCELL}>Date</th>
+                    <th className={HDCELL + " text-right"}>Amount</th>
+                    <th className={HDCELL}></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {procurement.map(item => (
+                    <tr key={item.id}
+                      className={`group/row transition-colors ${item.purchased ? "bg-emerald-50/50" : "bg-white hover:bg-gray-50/70"}`}>
+
+                      {/* Checkbox */}
+                      <td className={CELL + " text-center"}>
+                        <input type="checkbox" checked={item.purchased} onChange={() => togglePurchased(item)}
+                          title={item.purchased ? "Mark as pending" : "Mark as purchased — logs to Tracker"}
+                          className="w-4 h-4 cursor-pointer rounded"
+                          style={{accentColor:"#10b981"}}/>
+                      </td>
+
+                      {/* Item */}
+                      <td className={CELL}>
+                        <input type="text" value={item.item} placeholder="Item description…"
+                          onChange={e => updateItem(item.id, {item: e.target.value})}
+                          className={`w-full bg-transparent outline-none text-[12px] font-medium focus:ring-0 truncate ${item.purchased ? "line-through text-gray-400" : "text-gray-800"}`}/>
+                      </td>
+
+                      {/* Vendor */}
+                      <td className={CELL}>
+                        <input type="text" value={item.vendor} placeholder="Vendor…"
+                          onChange={e => updateItem(item.id, {vendor: e.target.value})}
+                          className="w-full bg-transparent outline-none text-[11px] text-gray-600 focus:ring-0 truncate"/>
+                      </td>
+
+                      {/* Project */}
+                      <td className={CELL}>
+                        {projects.length > 0 ? (
+                          <select value={item.project} onChange={e => updateItem(item.id, {project: e.target.value})}
+                            className="w-full bg-transparent outline-none text-[11px] text-gray-600 focus:ring-0 cursor-pointer">
+                            <option value="">— None —</option>
+                            {projects.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
+                          </select>
+                        ) : (
+                          <input type="text" value={item.project} placeholder="Project…"
+                            onChange={e => updateItem(item.id, {project: e.target.value})}
+                            className="w-full bg-transparent outline-none text-[11px] text-gray-600 focus:ring-0 truncate"/>
+                        )}
+                      </td>
+
+                      {/* Budget Category */}
+                      <td className={CELL}>
+                        <select value={item.category} onChange={e => updateItem(item.id, {category: e.target.value})}
+                          className="w-full bg-transparent outline-none text-[11px] text-gray-600 focus:ring-0 cursor-pointer truncate">
+                          {PURCHASE_CATS.map(c => <option key={c} value={c}>{c}</option>)}
+                        </select>
+                      </td>
+
+                      {/* Date */}
+                      <td className={CELL}>
+                        <input type="date" value={item.purchaseDate}
+                          onChange={e => updateItem(item.id, {purchaseDate: e.target.value})}
+                          className="w-full bg-transparent outline-none text-[11px] text-gray-500 focus:ring-0"/>
+                      </td>
+
+                      {/* Amount */}
+                      <td className={CELL + " text-right"}>
+                        <div className="flex items-center justify-end gap-0.5">
+                          <span className="text-gray-400 text-[11px]">$</span>
+                          <input type="number" min="0" step="0.01" value={item.amount} placeholder="0"
+                            onChange={e => updateItem(item.id, {amount: e.target.value})}
+                            className="w-full bg-transparent outline-none text-[12px] text-right font-semibold text-gray-800 focus:ring-0 tabular-nums"
+                            style={{maxWidth:80}}/>
+                        </div>
+                      </td>
+
+                      {/* Delete */}
+                      <td className={CELL + " text-center"}>
+                        <button onClick={() => deleteItem(item.id)}
+                          className="text-gray-300 hover:text-red-400 opacity-0 group-hover/row:opacity-100 transition-opacity">
+                          <IconTrash c="w-3.5 h-3.5"/>
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+
+                  {/* Totals footer */}
+                  {procurement.length > 0 && (
+                    <tr className="border-t-2 border-gray-200 bg-gray-50">
+                      <td colSpan={6} className="px-4 py-2.5 text-[11px] font-semibold text-gray-500">
+                        {purchased.length} of {procurement.length} items purchased
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <div className="text-[11px] text-gray-400">Budgeted</div>
+                        <div className="text-sm font-bold text-gray-800 tabular-nums">{fmtUSD(totalBudgeted)}</div>
+                      </td>
+                      <td/>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
+            )}
+          </div>
+
+          {purchased.length > 0 && (
+            <p className="mt-3 text-[11px] text-gray-400 text-center">
+              {purchased.length} purchased item{purchased.length>1?"s":""} automatically logged to the Tracker →  Purchase Log
+            </p>
+          )}
+        </div>
+      );
+    }
+
+    // =========================================================================
     // MAIN APP
     // =========================================================================
     const DEFAULT_SETTINGS = { projectName:"New Estimate", pricingTier:"mid", salesTaxPct:0, contingencyPct:0.1, overheadPct:0.1, profitPct:0.1 };
@@ -1414,13 +1657,14 @@
       const [purchases,   setPurchases]   = useState(saved?.purchases   ?? []);
       const [catProgress, setCatProgress] = useState(saved?.catProgress ?? {});
       const [planData,    setPlanData]    = useState(saved?.planData    ?? { projects:[], tasks:[] });
+      const [procurement, setProcurement] = useState(saved?.procurement ?? []);
       const [addingDef,   setAddingDef]   = useState(null);
       const [editingPair, setEditingPair] = useState(null);
       const [showSettings,setShowSettings]= useState(false);
       const [editingName, setEditingName] = useState(false);
-      const [activeView,  setActiveView]  = useState("estimate"); // "estimate" | "tracker" | "plan"
+      const [activeView,  setActiveView]  = useState("estimate"); // "estimate" | "tracker" | "plan" | "procurement"
 
-      useEffect(() => { save({ settings, instances, rateOverrides, purchases, catProgress, planData }); }, [settings, instances, rateOverrides, purchases, catProgress, planData]);
+      useEffect(() => { save({ settings, instances, rateOverrides, purchases, catProgress, planData, procurement }); }, [settings, instances, rateOverrides, purchases, catProgress, planData, procurement]);
 
       const addAssembly = (def, inputs) => { setInstances(p=>[...p,{id:uid(),assemblyId:def.id,inputs}]); setAddingDef(null); };
       const updateAssembly = (id, inputs) => { setInstances(p=>p.map(i=>i.id===id?{...i,inputs}:i)); setEditingPair(null); };
@@ -1585,6 +1829,11 @@
                 className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold transition-colors ${activeView==="plan"?"bg-blue-600 text-white":"bg-gray-800 text-gray-400 hover:bg-gray-700"}`}>
                 <IconEstimate c="w-3.5 h-3.5"/> Plan {planData.tasks.length>0&&<span className="bg-blue-500 text-white rounded-full px-1.5 py-0.5 text-[10px] ml-0.5">{planData.tasks.length}</span>}
               </button>
+              <button onClick={()=>setActiveView("procurement")}
+                className={`flex items-center gap-1.5 px-3 py-1 text-xs font-semibold transition-colors ${activeView==="procurement"?"bg-blue-600 text-white":"bg-gray-800 text-gray-400 hover:bg-gray-700"}`}>
+                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                Procurement {procurement.length>0&&<span className="bg-blue-500 text-white rounded-full px-1.5 py-0.5 text-[10px] ml-0.5">{procurement.filter(p=>!p.purchased).length||procurement.length}</span>}
+              </button>
             </div>
 
             {activeView==="estimate" && <>
@@ -1639,6 +1888,14 @@
                 instances={instances} tier={tier} rateOverrides={rateOverrides} settings={settings}
                 purchases={purchases} onAddPurchase={addPurchase} onDeletePurchase={deletePurchase}
                 catProgress={catProgress} onProgressChange={(cat, pct) => setCatProgress(p => ({...p, [cat]: pct}))}/>
+            </div>
+          ) : activeView === "procurement" ? (
+            /* Procurement checklist */
+            <div className="flex flex-1 overflow-hidden">
+              <ProcurementView
+                procurement={procurement} onProcurementChange={setProcurement}
+                purchases={purchases} onAddPurchase={addPurchase} onDeletePurchase={deletePurchase}
+                planData={planData}/>
             </div>
           ) : (
             /* Plan / Gantt view */
