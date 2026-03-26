@@ -343,13 +343,32 @@
     // Multi-project key (v3)
     const SK_V3 = "tradescope_v3";
     const DEFAULT_CONFIG = { customCategories: [], customAssemblies: [] };
+
+    // Normalize a customCategory entry — older saves stored plain strings; new format is { name, costType }
+    const normCat = c => (typeof c === "string") ? { name: c, costType: "labor" } : c;
+    // Normalize procurement item to new schema (estimatedAmount + actualAmount)
+    const normProc = p => {
+      if (p.estimatedAmount !== undefined) return p; // already new format
+      return {
+        ...p,
+        estimatedAmount: String(p.amount || ""),
+        actualAmount:    p.purchased ? String(p.amount || "") : "",
+        amount: undefined, // drop old field
+      };
+    };
+
     const loadAppData = () => {
       try {
         const r = localStorage.getItem(SK_V3);
         if (r) {
           const d = JSON.parse(r);
-          // Ensure config exists for older saves
           if (!d.config) d.config = {...DEFAULT_CONFIG};
+          // Normalize customCategories to object format
+          d.config.customCategories = (d.config.customCategories || []).map(normCat);
+          // Normalize procurement items in all projects
+          (d.projects || []).forEach(proj => {
+            if (proj.procurement) proj.procurement = proj.procurement.map(normProc);
+          });
           return d;
         }
       } catch(e) {}
@@ -366,7 +385,7 @@
           purchases:         v2.purchases         ?? [],
           catProgress:       v2.catProgress       ?? {},
           planData:          v2.planData          ?? { projects:[], tasks:[] },
-          procurement:       v2.procurement       ?? [],
+          procurement:       (v2.procurement ?? []).map(normProc),
           costTypeOverrides: {},
         }]};
       } catch(e) {}
@@ -386,20 +405,63 @@
     const GROUPS = ["Structural","Finishes","Demo","Ceilings","MEP","Specialties","Allowances"];
     const GROUP_COLOR = { Structural:"bg-slate-100 text-slate-700", Finishes:"bg-emerald-50 text-emerald-700", Demo:"bg-red-50 text-red-700", Ceilings:"bg-sky-50 text-sky-700", MEP:"bg-amber-50 text-amber-700", Specialties:"bg-purple-50 text-purple-700", Allowances:"bg-rose-50 text-rose-700" };
 
-    // Dynamic — accepts extra custom categories; call getPurchaseCats(config.customCategories)
+    // All categories (labor + material)
     const _BASE_CATS = (() => {
       const cats = new Set();
       Object.values(DB.rates).forEach(r => cats.add(r.category));
       DB.assemblies.forEach(asm => asm.lineItems.forEach(li => { if (li.customItem) cats.add(li.customItem.category); }));
       return [...cats].sort();
     })();
+    // Material-only categories (from DB assemblies with customItem lineItems)
+    const _MATERIAL_CATS = (() => {
+      const cats = new Set();
+      DB.assemblies.forEach(asm => asm.lineItems.forEach(li => { if (li.customItem) cats.add(li.customItem.category); }));
+      return [...cats].sort();
+    })();
+
+    // Returns all purchase categories (for Tracker + general dropdowns)
     const getPurchaseCats = (extras = [], customAsms = []) => {
       const all = new Set(_BASE_CATS);
       customAsms.forEach(ca => ca.category && all.add(ca.category));
-      (extras||[]).forEach(c => c && all.add(c));
+      (extras||[]).forEach(c => {
+        if (!c) return;
+        const name = (typeof c === "string") ? c : c.name;
+        if (name) all.add(name);
+      });
       return [...all].sort().concat(["Other"]);
     };
+    // Returns material-only categories (for Procurement dropdown)
+    const getMaterialCats = (customCats = [], customAsms = []) => {
+      const all = new Set(_MATERIAL_CATS);
+      // Custom assemblies flagged as material
+      customAsms.filter(ca => ca.costType === "material").forEach(ca => ca.category && all.add(ca.category));
+      // Custom categories flagged as material
+      (customCats||[]).forEach(c => {
+        const obj = normCat(c);
+        if (obj.costType === "material" && obj.name) all.add(obj.name);
+      });
+      return [...all].sort().concat(["Other"]);
+    };
+
     const PURCHASE_CATS = getPurchaseCats(); // fallback for legacy refs
+
+    // Convert procurement items with estimated amounts into estimate-compatible line items
+    const getProcurementLineItems = (procurement = []) =>
+      (procurement || []).filter(p => p.category && parseFloat(p.estimatedAmount) > 0).map(p => ({
+        id: `proc_${p.id}`,
+        rateKey: `__proc_${p.id}`,
+        label: p.item || "Procurement Item",
+        unit: "LS",
+        category: p.category,
+        qty: 1,
+        unitCost: parseFloat(p.estimatedAmount) || 0,
+        baseUnitCost: parseFloat(p.estimatedAmount) || 0,
+        total: parseFloat(p.estimatedAmount) || 0,
+        isOverridden: false,
+        isCustom: true,
+        costType: "material",
+        isProcurement: true,
+      }));
 
     // Convert a config custom assembly into a DB-compatible assembly def
     const customAsmToDef = (ca) => {
@@ -734,11 +796,14 @@
       );
     }
 
-    function SummaryPanel({ instances, tier, rateOverrides, costTypeOverrides, settings, onSettingsOpen, customAssemblies }) {
-      const allItems = useMemo(() => instances.flatMap(inst => {
-        const def = findAsm(inst.assemblyId, customAssemblies); if(!def) return [];
-        return computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides);
-      }), [instances, tier, rateOverrides, costTypeOverrides, customAssemblies]);
+    function SummaryPanel({ instances, tier, rateOverrides, costTypeOverrides, settings, onSettingsOpen, customAssemblies, procurement }) {
+      const allItems = useMemo(() => {
+        const asmItems = instances.flatMap(inst => {
+          const def = findAsm(inst.assemblyId, customAssemblies); if(!def) return [];
+          return computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides);
+        });
+        return [...asmItems, ...getProcurementLineItems(procurement)];
+      }, [instances, tier, rateOverrides, costTypeOverrides, customAssemblies, procurement]);
 
       const direct = allItems.reduce((s,i)=>s+i.total, 0);
       const contingency = direct * settings.contingencyPct;
@@ -861,17 +926,20 @@
       );
     }
 
-    function TrackerView({ instances, tier, rateOverrides, costTypeOverrides, settings, purchases, onAddPurchase, onDeletePurchase, catProgress, onProgressChange, customCategories, customAssemblies }) {
+    function TrackerView({ instances, tier, rateOverrides, costTypeOverrides, settings, purchases, onAddPurchase, onDeletePurchase, catProgress, onProgressChange, customCategories, customAssemblies, procurement }) {
       const purchaseCats = useMemo(() => getPurchaseCats(customCategories, customAssemblies), [customCategories, customAssemblies]);
       const [form, setForm] = useState({ vendor:"", description:"", category: PURCHASE_CATS[0], amount:"", date: new Date().toISOString().split("T")[0], notes:"" });
       const [showForm, setShowForm] = useState(false);
       const [purchaseFilter, setPurchaseFilter] = useState("all"); // "all"|"labor"|"material"
 
-      // All line items with costType
-      const allLineItems = useMemo(() => instances.flatMap(inst => {
-        const def = findAsm(inst.assemblyId, customAssemblies); if (!def) return [];
-        return computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides);
-      }), [instances, tier, rateOverrides, costTypeOverrides, customAssemblies]);
+      // All line items (assemblies + procurement est. amounts) with costType
+      const allLineItems = useMemo(() => {
+        const asmItems = instances.flatMap(inst => {
+          const def = findAsm(inst.assemblyId, customAssemblies); if (!def) return [];
+          return computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides);
+        });
+        return [...asmItems, ...getProcurementLineItems(procurement)];
+      }, [instances, tier, rateOverrides, costTypeOverrides, customAssemblies, procurement]);
 
       // Budget by category + costType map
       const { budgetByCat, costTypeByCat } = useMemo(() => {
@@ -1505,14 +1573,16 @@
     function ProcurementView({ procurement, onProcurementChange, purchases, onAddPurchase, onDeletePurchase, planData, customCategories, customAssemblies }) {
       const todayStr = new Date().toISOString().split("T")[0];
       const projects = planData?.projects ?? [];
-      const purchaseCats = useMemo(() => getPurchaseCats(customCategories, customAssemblies), [customCategories, customAssemblies]);
+      // Procurement only shows MATERIAL categories
+      const matCats = useMemo(() => getMaterialCats(customCategories, customAssemblies), [customCategories, customAssemblies]);
 
       // ── helpers ────────────────────────────────────────────────────────────
       const syncPurchaseEntry = (item, overrides, allProc, addPurchase, deletePurchase) => {
-        // delete old entry if exists, re-create with fresh data
         if (item.purchaseId) deletePurchase(item.purchaseId);
         const merged = {...item, ...overrides};
         if (!merged.purchased) return { purchaseId: null };
+        // Use actualAmount if set, otherwise fall back to estimatedAmount
+        const amt = parseFloat(merged.actualAmount) || parseFloat(merged.estimatedAmount) || 0;
         const newId = uid();
         addPurchase({
           id: newId,
@@ -1520,7 +1590,7 @@
           category: merged.category,
           vendor: merged.vendor || "—",
           description: merged.item || "Procurement item",
-          amount: parseFloat(merged.amount) || 0,
+          amount: amt,
         });
         return { purchaseId: newId };
       };
@@ -1537,12 +1607,10 @@
 
       const togglePurchased = (item) => {
         if (!item.purchased) {
-          // Mark as purchased
           const extra = syncPurchaseEntry({...item, purchased:true}, {}, procurement, onAddPurchase, onDeletePurchase);
           onProcurementChange(procurement.map(p => p.id === item.id
             ? {...p, purchased:true, purchaseDate: p.purchaseDate || todayStr, ...extra} : p));
         } else {
-          // Unmark
           if (item.purchaseId) onDeletePurchase(item.purchaseId);
           onProcurementChange(procurement.map(p => p.id === item.id
             ? {...p, purchased:false, purchaseId:null} : p));
@@ -1552,8 +1620,8 @@
       const addItem = () => {
         onProcurementChange([...procurement, {
           id: uid(), item:"", vendor:"", project:"",
-          category: purchaseCats[0] || PURCHASE_CATS[0], purchased:false,
-          purchaseDate:"", amount:"", purchaseId:null,
+          category: matCats[0] || PURCHASE_CATS[0], purchased:false,
+          purchaseDate:"", estimatedAmount:"", actualAmount:"", purchaseId:null,
         }]);
       };
 
@@ -1566,11 +1634,11 @@
       // ── summary stats ───────────────────────────────────────────────────────
       const pending   = procurement.filter(p => !p.purchased);
       const purchased = procurement.filter(p =>  p.purchased);
-      const totalBudgeted = procurement.reduce((s,p) => s + (parseFloat(p.amount)||0), 0);
-      const totalSpent    = purchased.reduce((s,p)   => s + (parseFloat(p.amount)||0), 0);
+      const totalEst  = procurement.reduce((s,p) => s + (parseFloat(p.estimatedAmount)||0), 0);
+      const totalAct  = purchased.reduce((s,p)   => s + (parseFloat(p.actualAmount) || parseFloat(p.estimatedAmount)||0), 0);
 
-      const CELL = "px-3 py-2 text-[11px] text-gray-600 border-t border-gray-100";
-      const HDCELL = "px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400 bg-gray-50 text-left whitespace-nowrap";
+      const CELL   = "px-2 py-2 text-[11px] text-gray-600 border-t border-gray-100";
+      const HDCELL = "px-2 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400 bg-gray-50 text-left whitespace-nowrap";
 
       return (
         <div className="flex-1 overflow-auto p-6" style={{background:"#f9fafb"}}>
@@ -1578,19 +1646,23 @@
           {/* Summary cards */}
           <div className="grid grid-cols-5 gap-3 mb-5">
             {[
-              {label:"Total Items",  val:procurement.length,  fmt:false, color:"text-gray-900"},
-              {label:"Pending",      val:pending.length,      fmt:false, color:"text-amber-600"},
-              {label:"Purchased",    val:purchased.length,    fmt:false, color:"text-emerald-600"},
-              {label:"Budgeted",     val:totalBudgeted,       fmt:true,  color:"text-gray-900"},
-              {label:"Spent",        val:totalSpent,          fmt:true,  color:"text-blue-700"},
+              {label:"Total Items",   val:procurement.length, fmt:false, color:"text-gray-900"},
+              {label:"Pending",       val:pending.length,     fmt:false, color:"text-amber-600"},
+              {label:"Purchased",     val:purchased.length,   fmt:false, color:"text-emerald-600"},
+              {label:"Est. Budget",   val:totalEst,           fmt:true,  color:"text-gray-900"},
+              {label:"Actual Spent",  val:totalAct,           fmt:true,  color:"text-blue-700"},
             ].map(({label,val,fmt,color}) => (
               <div key={label} className="bg-white rounded-xl p-4 border border-gray-200">
                 <div className="text-[11px] text-gray-400 mb-1">{label}</div>
-                <div className={`text-xl font-bold tabular-nums ${color}`}>
-                  {fmt ? fmtUSD(val) : val}
-                </div>
+                <div className={`text-xl font-bold tabular-nums ${color}`}>{fmt ? fmtUSD(val) : val}</div>
               </div>
             ))}
+          </div>
+
+          {/* Info banner */}
+          <div className="mb-4 flex items-start gap-2 bg-blue-50 border border-blue-200 rounded-xl px-4 py-2.5">
+            <IconAlert c="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5"/>
+            <p className="text-[11px] text-blue-700">Items with an <strong>Est. Amount</strong> automatically appear as line items in the Estimate tab. Check an item off to log the <strong>Actual Amount</strong> to the Tracker.</p>
           </div>
 
           {/* Checklist table */}
@@ -1598,7 +1670,7 @@
             <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
               <div>
                 <h2 className="text-sm font-bold text-gray-800">Procurement Checklist</h2>
-                <p className="text-[11px] text-gray-400 mt-0.5">Check an item off to automatically log it to the Tracker.</p>
+                <p className="text-[11px] text-gray-400 mt-0.5">Only Material categories shown — add custom Material categories in Config.</p>
               </div>
               <button onClick={addItem}
                 className="flex items-center gap-1.5 text-xs font-semibold text-blue-600 hover:text-blue-800 px-3 py-1.5 rounded-lg border border-blue-200 hover:bg-blue-50 transition-colors">
@@ -1612,19 +1684,20 @@
                   <IconBuilding c="w-6 h-6 text-gray-300"/>
                 </div>
                 <p className="text-sm font-medium text-gray-400">No items yet</p>
-                <p className="text-xs text-gray-400 mt-1">Click "Add Item" to start your procurement list.</p>
+                <p className="text-xs text-gray-400 mt-1">Click "Add Item" to build your materials list. Estimated amounts feed the Estimate tab.</p>
               </div>
             ) : (
               <table className="w-full" style={{tableLayout:"fixed"}}>
                 <colgroup>
                   <col style={{width:"4%"}}/>
-                  <col style={{width:"20%"}}/>
-                  <col style={{width:"14%"}}/>
-                  <col style={{width:"13%"}}/>
-                  <col style={{width:"17%"}}/>
-                  <col style={{width:"13%"}}/>
-                  <col style={{width:"13%"}}/>
-                  <col style={{width:"6%"}}/>
+                  <col style={{width:"18%"}}/>
+                  <col style={{width:"11%"}}/>
+                  <col style={{width:"10%"}}/>
+                  <col style={{width:"15%"}}/>
+                  <col style={{width:"10%"}}/>
+                  <col style={{width:"11%"}}/>
+                  <col style={{width:"11%"}}/>
+                  <col style={{width:"5%"}}/>
                 </colgroup>
                 <thead>
                   <tr>
@@ -1632,9 +1705,10 @@
                     <th className={HDCELL}>Item</th>
                     <th className={HDCELL}>Vendor</th>
                     <th className={HDCELL}>Project</th>
-                    <th className={HDCELL}>Budget Category</th>
+                    <th className={HDCELL}>Category</th>
                     <th className={HDCELL}>Date</th>
-                    <th className={HDCELL + " text-right"}>Amount</th>
+                    <th className={HDCELL + " text-right"}>Est. Amount</th>
+                    <th className={HDCELL + " text-right"}>Actual Amount</th>
                     <th className={HDCELL}></th>
                   </tr>
                 </thead>
@@ -1646,14 +1720,13 @@
                       {/* Checkbox */}
                       <td className={CELL + " text-center"}>
                         <input type="checkbox" checked={item.purchased} onChange={() => togglePurchased(item)}
-                          title={item.purchased ? "Mark as pending" : "Mark as purchased — logs to Tracker"}
-                          className="w-4 h-4 cursor-pointer rounded"
-                          style={{accentColor:"#10b981"}}/>
+                          title={item.purchased ? "Mark as pending" : "Mark as purchased — logs Actual to Tracker"}
+                          className="w-4 h-4 cursor-pointer rounded" style={{accentColor:"#10b981"}}/>
                       </td>
 
                       {/* Item */}
                       <td className={CELL}>
-                        <input type="text" value={item.item} placeholder="Item description…"
+                        <input type="text" value={item.item} placeholder="Description…"
                           onChange={e => updateItem(item.id, {item: e.target.value})}
                           className={`w-full bg-transparent outline-none text-[12px] font-medium focus:ring-0 truncate ${item.purchased ? "line-through text-gray-400" : "text-gray-800"}`}/>
                       </td>
@@ -1680,29 +1753,42 @@
                         )}
                       </td>
 
-                      {/* Budget Category */}
+                      {/* Budget Category — material-only */}
                       <td className={CELL}>
                         <select value={item.category} onChange={e => updateItem(item.id, {category: e.target.value})}
                           className="w-full bg-transparent outline-none text-[11px] text-gray-600 focus:ring-0 cursor-pointer truncate">
-                          {purchaseCats.map(c => <option key={c} value={c}>{c}</option>)}
+                          {matCats.map(c => <option key={c} value={c}>{c}</option>)}
                         </select>
                       </td>
 
-                      {/* Date */}
+                      {/* Date (purchase date) */}
                       <td className={CELL}>
                         <input type="date" value={item.purchaseDate}
                           onChange={e => updateItem(item.id, {purchaseDate: e.target.value})}
                           className="w-full bg-transparent outline-none text-[11px] text-gray-500 focus:ring-0"/>
                       </td>
 
-                      {/* Amount */}
+                      {/* Est. Amount — feeds Estimate tab */}
                       <td className={CELL + " text-right"}>
                         <div className="flex items-center justify-end gap-0.5">
-                          <span className="text-gray-400 text-[11px]">$</span>
-                          <input type="number" min="0" step="0.01" value={item.amount} placeholder="0"
-                            onChange={e => updateItem(item.id, {amount: e.target.value})}
-                            className="w-full bg-transparent outline-none text-[12px] text-right font-semibold text-gray-800 focus:ring-0 tabular-nums"
-                            style={{maxWidth:80}}/>
+                          <span className="text-gray-400 text-[10px]">$</span>
+                          <input type="number" min="0" step="0.01" value={item.estimatedAmount} placeholder="0"
+                            onChange={e => updateItem(item.id, {estimatedAmount: e.target.value})}
+                            title="Estimated amount — feeds the Estimate tab"
+                            className="w-full bg-transparent outline-none text-[11px] text-right font-semibold text-blue-700 focus:ring-0 tabular-nums"
+                            style={{maxWidth:72}}/>
+                        </div>
+                      </td>
+
+                      {/* Actual Amount — logged to Tracker on purchase */}
+                      <td className={CELL + " text-right"}>
+                        <div className="flex items-center justify-end gap-0.5">
+                          <span className="text-gray-400 text-[10px]">$</span>
+                          <input type="number" min="0" step="0.01" value={item.actualAmount || ""} placeholder="0"
+                            onChange={e => updateItem(item.id, {actualAmount: e.target.value})}
+                            title="Actual amount paid — logged to Tracker when checked off"
+                            className={`w-full bg-transparent outline-none text-[11px] text-right font-semibold focus:ring-0 tabular-nums ${item.purchased ? "text-emerald-700" : "text-gray-500"}`}
+                            style={{maxWidth:72}}/>
                         </div>
                       </td>
 
@@ -1719,12 +1805,16 @@
                   {/* Totals footer */}
                   {procurement.length > 0 && (
                     <tr className="border-t-2 border-gray-200 bg-gray-50">
-                      <td colSpan={6} className="px-4 py-2.5 text-[11px] font-semibold text-gray-500">
-                        {purchased.length} of {procurement.length} items purchased
+                      <td colSpan={6} className="px-3 py-2.5 text-[11px] font-semibold text-gray-500">
+                        {purchased.length} of {procurement.length} purchased · est. amounts feed Estimate tab
                       </td>
-                      <td className="px-3 py-2.5 text-right">
-                        <div className="text-[11px] text-gray-400">Budgeted</div>
-                        <div className="text-sm font-bold text-gray-800 tabular-nums">{fmtUSD(totalBudgeted)}</div>
+                      <td className="px-2 py-2.5 text-right">
+                        <div className="text-[10px] text-gray-400">Est. Total</div>
+                        <div className="text-sm font-bold text-blue-700 tabular-nums">{fmtUSD(totalEst)}</div>
+                      </td>
+                      <td className="px-2 py-2.5 text-right">
+                        <div className="text-[10px] text-gray-400">Actual Total</div>
+                        <div className="text-sm font-bold text-emerald-700 tabular-nums">{fmtUSD(totalAct)}</div>
                       </td>
                       <td/>
                     </tr>
@@ -1733,12 +1823,6 @@
               </table>
             )}
           </div>
-
-          {purchased.length > 0 && (
-            <p className="mt-3 text-[11px] text-gray-400 text-center">
-              {purchased.length} purchased item{purchased.length>1?"s":""} automatically logged to the Tracker →  Purchase Log
-            </p>
-          )}
         </div>
       );
     }
@@ -1758,17 +1842,20 @@
     // CONFIG VIEW (global — custom assemblies, custom categories, default pricing)
     // =========================================================================
     function ConfigView({ config, onConfigChange, onClose }) {
-      const { customCategories = [], customAssemblies = [] } = config;
+      const customCategories = (config.customCategories || []).map(normCat);
+      const { customAssemblies = [] } = config;
       const [newCat, setNewCat] = useState("");
+      const [newCatType, setNewCatType] = useState("material"); // default to material since procurement is the use-case
       const [newAsm, setNewAsm] = useState({ name:"", group: GROUPS[0], category:"", unit:"SF", cost:"", costType:"labor" });
 
       const addCat = () => {
         const t = newCat.trim(); if (!t) return;
-        if (customCategories.includes(t)) return;
-        onConfigChange({ ...config, customCategories: [...customCategories, t] });
+        if (customCategories.some(c => c.name === t)) return;
+        onConfigChange({ ...config, customCategories: [...customCategories, { name: t, costType: newCatType }] });
         setNewCat("");
       };
-      const delCat = (c) => onConfigChange({ ...config, customCategories: customCategories.filter(x => x !== c) });
+      const delCat = (c) => onConfigChange({ ...config, customCategories: customCategories.filter(x => x.name !== c.name) });
+      const toggleCatType = (c) => onConfigChange({ ...config, customCategories: customCategories.map(x => x.name === c.name ? {...x, costType: x.costType === "labor" ? "material" : "labor"} : x) });
 
       const addAsm = () => {
         if (!newAsm.name.trim() || !newAsm.category.trim() || !newAsm.cost) return;
@@ -1870,11 +1957,19 @@
               {/* Custom Categories */}
               <section>
                 <h3 className="text-sm font-bold text-gray-800 mb-1">Custom Budget Categories</h3>
-                <p className="text-xs text-gray-400 mb-3">Extra categories that appear in the Tracker and Procurement dropdowns.</p>
+                <p className="text-xs text-gray-400 mb-3">Extra categories — flag each as Labor or Material. Material categories appear in the Procurement checklist.</p>
                 <div className="flex gap-2 mb-3">
                   <input value={newCat} placeholder="Category name…" onChange={e=>setNewCat(e.target.value)}
                     onKeyDown={e=>{if(e.key==="Enter")addCat();}}
                     className={INP + " flex-1"}/>
+                  <div className="flex rounded-lg overflow-hidden border border-gray-300 text-xs font-bold">
+                    {["labor","material"].map(t=>(
+                      <button key={t} onClick={()=>setNewCatType(t)}
+                        className={`px-3 py-1.5 transition-colors ${newCatType===t ? (t==="labor"?"bg-blue-500 text-white":"bg-amber-500 text-white") : "bg-white text-gray-500 hover:bg-gray-50"}`}>
+                        {t==="labor"?"L":"M"}
+                      </button>
+                    ))}
+                  </div>
                   <button onClick={addCat} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors">Add</button>
                 </div>
                 {customCategories.length === 0 ? (
@@ -1882,9 +1977,14 @@
                 ) : (
                   <div className="flex flex-wrap gap-2">
                     {customCategories.map(c => (
-                      <span key={c} className="flex items-center gap-1.5 bg-blue-50 text-blue-700 text-xs font-medium px-2.5 py-1 rounded-full">
-                        {c}
-                        <button onClick={()=>delCat(c)} className="text-blue-300 hover:text-red-400 transition-colors">×</button>
+                      <span key={c.name} className="flex items-center gap-1 bg-gray-100 text-gray-700 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-full">
+                        {c.name}
+                        <button onClick={()=>toggleCatType(c)}
+                          title={`Click to toggle: currently ${c.costType}`}
+                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full transition-colors ${c.costType==="labor"?"bg-blue-100 text-blue-700 hover:bg-blue-200":"bg-amber-100 text-amber-700 hover:bg-amber-200"}`}>
+                          {c.costType==="labor"?"L":"M"}
+                        </button>
+                        <button onClick={()=>delCat(c)} className="text-gray-400 hover:text-red-400 transition-colors ml-0.5">×</button>
                       </span>
                     ))}
                   </div>
@@ -1942,11 +2042,13 @@
       const getStats = (proj) => {
         const tier = proj.settings?.pricingTier ?? "mid";
         const projCustomAsms = config?.customAssemblies ?? [];
-        const budget = (proj.instances ?? []).flatMap(inst => {
+        const asmBudget = (proj.instances ?? []).flatMap(inst => {
           const def = findAsm(inst.assemblyId, projCustomAsms);
           if (!def) return [];
           return computeLineItems(def, inst.inputs, tier, proj.rateOverrides ?? {}, proj.costTypeOverrides ?? {});
         }).reduce((s, li) => s + li.total, 0);
+        const procBudget = getProcurementLineItems(proj.procurement ?? []).reduce((s, li) => s + li.total, 0);
+        const budget = asmBudget + procBudget;
         const spent = (proj.purchases ?? []).reduce((s, p) => s + (p.amount||0), 0);
         const tasks = proj.planData?.tasks ?? [];
         let planStart = null, planEnd = null;
@@ -2144,10 +2246,12 @@
       const tier = settings.pricingTier;
 
       const printEstimate = () => {
-        const allItems = instances.flatMap(inst => {
+        const asmItems = instances.flatMap(inst => {
           const def = findAsm(inst.assemblyId, customAssemblies); if(!def) return [];
           return computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides).map(li => ({...li, asmName: def.name, asmGroup: def.group}));
         });
+        const procItems = getProcurementLineItems(procurement).map(li => ({...li, asmName: "Procurement Materials", asmGroup: "Procurement"}));
+        const allItems = [...asmItems, ...procItems];
         const direct = allItems.reduce((s,i)=>s+i.total,0);
         const contingency = direct * settings.contingencyPct;
         const base = direct + contingency;
@@ -2160,13 +2264,15 @@
         const tierLabel = {low:"Low",mid:"Mid",high:"High"}[tier];
         const date = new Date().toLocaleDateString("en-US",{year:"numeric",month:"long",day:"numeric"});
 
-        // Group items by assembly
+        // Group items by assembly (+ procurement block)
         const asmMap = {};
         instances.forEach(inst => {
           const def = findAsm(inst.assemblyId, customAssemblies); if(!def) return;
           const items = computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides);
           if(!asmMap[inst.id]) asmMap[inst.id] = { name: def.name, group: def.group, items };
         });
+        const procLineItems = getProcurementLineItems(procurement);
+        if (procLineItems.length > 0) asmMap["__procurement"] = { name: "Procurement Materials", group: "Procurement", items: procLineItems };
 
         const asmRows = Object.values(asmMap).map(({name,group,items}) => {
           const sub = items.reduce((s,i)=>s+i.total,0);
@@ -2352,12 +2458,60 @@
                         onRateOverride={setOverride} onResetRateOverride={resetOverride}
                         onCostTypeChange={setCostTypeOverride}/>;
                     })}
+                    {/* Procurement materials section */}
+                    {(() => {
+                      const procItems = getProcurementLineItems(procurement);
+                      if (procItems.length === 0) return null;
+                      const procTotal = procItems.reduce((s,i)=>s+i.total,0);
+                      return (
+                        <div className="bg-white rounded-xl border border-amber-200 shadow-sm overflow-hidden">
+                          <div className="flex items-center gap-3 px-4 py-3 bg-amber-50/60 border-b border-amber-100">
+                            <svg className="w-4 h-4 text-amber-500 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}><path strokeLinecap="round" strokeLinejoin="round" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"/></svg>
+                            <div className="flex-1 min-w-0">
+                              <span className="font-semibold text-gray-900 text-sm">Procurement Materials</span>
+                              <span className="ml-2 text-[10px] font-semibold uppercase tracking-wider px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">from Procurement tab</span>
+                              <p className="text-[11px] text-gray-400 mt-0.5">{procItems.length} item{procItems.length!==1?"s":""} · estimated amounts</p>
+                            </div>
+                            <div className="font-bold text-gray-900 text-sm tabular-nums flex-shrink-0">{fmtUSD(procTotal)}</div>
+                          </div>
+                          <div className="overflow-x-auto">
+                            <table className="w-full" style={{tableLayout:"fixed"}}>
+                              <colgroup><col style={{width:"44%"}}/><col style={{width:"20%"}}/><col style={{width:"20%"}}/><col style={{width:"16%"}}/></colgroup>
+                              <thead><tr className="border-b border-gray-100">
+                                <th className="py-2 pl-5 pr-3 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Description</th>
+                                <th className="py-2 px-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Qty</th>
+                                <th className="py-2 px-3 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Est. Cost</th>
+                                <th className="py-2 pl-3 pr-5 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Total</th>
+                              </tr></thead>
+                              <tbody className="divide-y divide-gray-50">
+                                {procItems.map(item=>(
+                                  <tr key={item.id} className="hover:bg-amber-50/30">
+                                    <td className="py-2 pl-5 pr-3 text-sm">
+                                      <span className="text-gray-800">{item.label}</span>
+                                      <span className="block text-[11px] text-gray-400">{item.category}</span>
+                                    </td>
+                                    <td className="py-2 px-3 text-sm text-right text-gray-500 tabular-nums">1 <span className="text-gray-400">LS</span></td>
+                                    <td className="py-2 px-3 text-sm text-right tabular-nums text-gray-600">{fmtUSD2(item.unitCost)}</td>
+                                    <td className="py-2 pl-3 pr-5 text-sm text-right font-semibold text-gray-800 tabular-nums">{fmtUSD(item.total)}</td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                              <tfoot><tr className="border-t border-gray-200 bg-gray-50/50">
+                                <td colSpan={3} className="py-2.5 pl-5 pr-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Materials Subtotal</td>
+                                <td className="py-2.5 pl-3 pr-5 text-sm font-bold text-gray-900 text-right tabular-nums">{fmtUSD(procTotal)}</td>
+                              </tr></tfoot>
+                            </table>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
               <div className="flex-shrink-0" style={{width:"299px"}}>
                 <SummaryPanel instances={instances} tier={tier} rateOverrides={rateOverrides} costTypeOverrides={costTypeOverrides}
-                  settings={settings} onSettingsOpen={()=>setShowSettings(true)} customAssemblies={customAssemblies}/>
+                  settings={settings} onSettingsOpen={()=>setShowSettings(true)} customAssemblies={customAssemblies}
+                  procurement={procurement}/>
               </div>
             </div>
           ) : activeView === "tracker" ? (
@@ -2367,7 +2521,8 @@
                 instances={instances} tier={tier} rateOverrides={rateOverrides} costTypeOverrides={costTypeOverrides} settings={settings}
                 purchases={purchases} onAddPurchase={addPurchase} onDeletePurchase={deletePurchase}
                 catProgress={catProgress} onProgressChange={(cat, pct) => setCatProgress(p => ({...p, [cat]: pct}))}
-                customCategories={customCategories} customAssemblies={customAssemblies}/>
+                customCategories={customCategories} customAssemblies={customAssemblies}
+                procurement={procurement}/>
             </div>
           ) : activeView === "procurement" ? (
             /* Procurement checklist */
