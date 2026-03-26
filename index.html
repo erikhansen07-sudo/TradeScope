@@ -1018,7 +1018,7 @@
     // PLAN MODULE (GANTT)
     // =========================================================================
     const PLAN_COLORS = ["#3b82f6","#8b5cf6","#10b981","#f59e0b","#f43f5e","#06b6d4","#f97316","#ec4899"];
-    const PLAN_LEFT_W = 360;
+    const PLAN_LEFT_W = 420;
     const TASK_STATUS_CFG = {
       not_started: { label:"Not Started", bg:"#f3f4f6", color:"#6b7280", bar:"#d1d5db" },
       in_progress:  { label:"In Progress", bg:"#dbeafe", color:"#1d4ed8", bar:"#3b82f6" },
@@ -1303,7 +1303,7 @@
                     {/* TASK ROWS — single line */}
                     {!isCol && projTasks.map(task => {
                       const sc = TASK_STATUS_CFG[task.status] || TASK_STATUS_CFG.not_started;
-                      const barColor = task.status==="done" ? "#10b981" : task.status==="in_progress" ? color : "#d1d5db";
+                      const barColor = task.status==="done" ? "#10b981" : task.status==="in_progress" ? color : "#94a3b8";
 
                       // Use live drag values if this task is being dragged
                       const isActiveDrag = dragLive && dragLive.taskId === task.id;
@@ -1324,7 +1324,7 @@
                             <span className="flex-1 min-w-0 text-xs text-gray-800 font-medium truncate">{task.name}</span>
                             <select value={task.status} onChange={e=>upTask(task.id,{status:e.target.value})}
                               className="text-[9px] font-semibold px-1 py-0.5 rounded border-0 cursor-pointer focus:outline-none flex-shrink-0"
-                              style={{background:sc.bg, color:sc.color, maxWidth:76}}>
+                              style={{background:sc.bg, color:sc.color, minWidth:82}}>
                               {Object.entries(TASK_STATUS_CFG).map(([k,v])=><option key={k} value={k}>{v.label}</option>)}
                             </select>
                             <input type="date" value={liveStart||todayStr}
@@ -1344,6 +1344,16 @@
                           {/* GANTT BAR */}
                           <div className="relative flex-shrink-0 flex items-center" style={{width:totalW}}>
                             <DayBg h={ROW_H}/>
+                            {/* Outside label — shown when bar is too narrow, right-justified against bar's left edge */}
+                            {barW <= 44 && startI * DAY_W > 4 && (
+                              <div className="pointer-events-none" style={{
+                                position:"absolute", top:"50%", transform:"translateY(-50%)",
+                                right: totalW - startI * DAY_W + 3,
+                                maxWidth:140, zIndex:2, textAlign:"right", whiteSpace:"nowrap", overflow:"hidden",
+                              }}>
+                                <span style={{fontSize:9, fontWeight:600, color:"#1e293b"}}>{task.name}</span>
+                              </div>
+                            )}
                             {/* Bar — draggable body */}
                             <div
                               className="absolute rounded flex items-center overflow-hidden select-none"
@@ -1359,7 +1369,7 @@
                                 boxShadow: isDraggingThis ? "0 4px 12px rgba(0,0,0,0.25)" : "none",
                                 transition: isDraggingThis ? "none" : "box-shadow 0.15s",
                               }}>
-                              {/* Label */}
+                              {/* Label inside bar — only when wide enough */}
                               <span className="flex-1 min-w-0 text-[9px] font-semibold text-white truncate whitespace-nowrap px-1.5 pointer-events-none">
                                 {barW > 44 ? task.name : ""}
                               </span>
