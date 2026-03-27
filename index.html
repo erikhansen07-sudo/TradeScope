@@ -346,19 +346,40 @@
     const SK_V2 = "tradescope_v2";
     // Multi-project key (v3)
     const SK_V3 = "tradescope_v3";
-    const DEFAULT_CONFIG = { customAssemblies: [], asmOverrides: {}, masterGroups: null, globalRateOverrides: {} };
+    const DEFAULT_CONFIG = { customAssemblies: [], asmOverrides: {}, masterGroups: null, globalRateOverrides: {}, units: ["SF", "LF", "EA"] };
 
     // Normalize a customCategory entry — older saves stored plain strings; new format is { name, costType }
     const normCat = c => (typeof c === "string") ? { name: c, costType: "labor" } : c;
-    // Normalize procurement item to new schema (estimatedAmount + actualAmount)
+    // Normalize procurement item to new schema
     const normProc = p => {
-      if (p.estimatedAmount !== undefined) return p; // already new format
-      return {
+      const base = p.estimatedAmount !== undefined ? p : {
         ...p,
         estimatedAmount: String(p.amount || ""),
         actualAmount:    p.purchased ? String(p.amount || "") : "",
-        amount: undefined, // drop old field
+        amount: undefined,
       };
+      // Add qty/unit/pricePerUnit/install fields if missing
+      return {
+        qty: "", unit: "SF", pricePerUnit: "", includeInstall: false, installPricePerUnit: "",
+        ...base,
+      };
+    };
+
+    // Look up a default install rate for a sub-assembly name (from DB assembly labor line items)
+    const getDefaultInstallRate = (category, tier = "mid") => {
+      const asm = DB.assemblies.find(a => a.name === category);
+      if (!asm) return "";
+      const li = asm.lineItems.find(l => !l.customItem && (l.rateKey || l.rateSelector));
+      if (!li) return "";
+      if (li.rateKey) return String(DB.rates[li.rateKey]?.[tier] ?? "");
+      if (li.rateSelector) {
+        const sel = Object.values(li.rateSelector)[0];
+        if (typeof sel === "object") {
+          const firstKey = Object.values(sel)[0];
+          return String(DB.rates[firstKey]?.[tier] ?? "");
+        }
+      }
+      return "";
     };
 
     const loadAppData = () => {
@@ -370,6 +391,7 @@
           if (!d.config.asmOverrides) d.config.asmOverrides = {};
           if (!d.config.globalRateOverrides) d.config.globalRateOverrides = {};
           if (d.config.masterGroups === undefined) d.config.masterGroups = null;
+          if (!d.config.units || d.config.units.length === 0) d.config.units = ["SF", "LF", "EA"];
           // Migrate legacy customCategories (no longer used, discard)
           delete d.config.customCategories;
           // Normalize procurement items in all projects
@@ -465,23 +487,50 @@
 
     const PURCHASE_CATS = getPurchaseCats(); // fallback for legacy refs
 
-    // Convert procurement items with estimated amounts into estimate-compatible line items
-    const getProcurementLineItems = (procurement = []) =>
-      (procurement || []).filter(p => p.category && parseFloat(p.estimatedAmount) > 0).map(p => ({
-        id: `proc_${p.id}`,
-        rateKey: `__proc_${p.id}`,
-        label: p.item || "Procurement Item",
-        unit: "LS",
-        category: p.category,
-        qty: 1,
-        unitCost: parseFloat(p.estimatedAmount) || 0,
-        baseUnitCost: parseFloat(p.estimatedAmount) || 0,
-        total: parseFloat(p.estimatedAmount) || 0,
-        isOverridden: false,
-        isCustom: true,
-        costType: "material",
-        isProcurement: true,
-      }));
+    // Convert procurement items into estimate-compatible line items
+    const getProcurementLineItems = (procurement = []) => {
+      const result = [];
+      (procurement || []).forEach(p => {
+        if (!p.category) return;
+        // Compute material total: qty×pricePerUnit if set, else fallback to estimatedAmount
+        const qty = parseFloat(p.qty) || 0;
+        const ppu = parseFloat(p.pricePerUnit) || 0;
+        const computedAmt = qty > 0 && ppu > 0 ? qty * ppu : parseFloat(p.estimatedAmount) || 0;
+        if (computedAmt > 0) {
+          result.push({
+            id: `proc_${p.id}`,
+            rateKey: `__proc_${p.id}`,
+            label: p.item || "Procurement Item",
+            unit: p.unit || "LS",
+            category: p.category,
+            qty: qty > 0 ? qty : 1,
+            unitCost: qty > 0 && ppu > 0 ? ppu : computedAmt,
+            baseUnitCost: qty > 0 && ppu > 0 ? ppu : computedAmt,
+            total: computedAmt,
+            isOverridden: false, isCustom: true, costType: "material", isProcurement: true,
+          });
+        }
+        // Install line item (labor) when includeInstall is checked
+        if (p.includeInstall && qty > 0) {
+          const iRate = parseFloat(p.installPricePerUnit) || 0;
+          if (iRate > 0) {
+            result.push({
+              id: `proc_install_${p.id}`,
+              rateKey: `__proc_install_${p.id}`,
+              label: (p.item ? p.item + " — " : "") + "Install",
+              unit: p.unit || "SF",
+              category: p.category,
+              qty: qty,
+              unitCost: iRate,
+              baseUnitCost: iRate,
+              total: qty * iRate,
+              isOverridden: false, isCustom: true, costType: "labor", isProcurement: true,
+            });
+          }
+        }
+      });
+      return result;
+    };
 
     // Convert a config custom assembly into a DB-compatible assembly def
     const customAsmToDef = (ca) => {
@@ -850,7 +899,7 @@
                     {procItems.map(item => (
                       <tr key={item.id} className="hover:bg-amber-50/30">
                         <td className="py-2 pl-5 pr-3 text-sm text-gray-800">{item.label}</td>
-                        <td className="py-2 px-3 text-sm text-right text-gray-400 tabular-nums">1 LS</td>
+                        <td className="py-2 px-3 text-sm text-right text-gray-400 tabular-nums">{item.qty} {item.unit}</td>
                         <td className="py-2 px-3 text-sm text-right tabular-nums text-gray-500">{fmtUSD2(item.unitCost)}</td>
                         <td className="py-2 pl-3 pr-5 text-sm text-right font-semibold text-gray-800 tabular-nums">{fmtUSD(item.total)}</td>
                       </tr>
@@ -1737,9 +1786,10 @@
     // =========================================================================
     // PROCUREMENT VIEW
     // =========================================================================
-    function ProcurementView({ procurement, onProcurementChange, purchases, onAddPurchase, onDeletePurchase, planData, customAssemblies, asmOverrides }) {
+    function ProcurementView({ procurement, onProcurementChange, purchases, onAddPurchase, onDeletePurchase, planData, customAssemblies, asmOverrides, config }) {
       const todayStr = new Date().toISOString().split("T")[0];
       const projects = planData?.projects ?? [];
+      const units = config?.units || ["SF", "LF", "EA"];
       // Procurement shows sub-assembly names that have material line items
       const matCats = useMemo(() => getMaterialAsmNames(customAssemblies, asmOverrides || {}), [customAssemblies, asmOverrides]);
 
@@ -1765,6 +1815,21 @@
       const updateItem = (id, changes) => {
         const current = procurement.find(p => p.id === id);
         if (!current) return;
+        const merged = {...current, ...changes};
+        // Auto-compute estimatedAmount from qty × pricePerUnit
+        const q = parseFloat(merged.qty) || 0;
+        const ppu = parseFloat(merged.pricePerUnit) || 0;
+        if (q > 0 && ppu > 0) changes.estimatedAmount = String((q * ppu).toFixed(2));
+        // Auto-populate installPricePerUnit when includeInstall is first checked
+        if (changes.includeInstall && !current.includeInstall && !current.installPricePerUnit) {
+          const rate = getDefaultInstallRate(merged.category || current.category, "mid");
+          if (rate) changes.installPricePerUnit = rate;
+        }
+        // Also re-populate when category changes and install is on
+        if (changes.category && merged.includeInstall && !current.installPricePerUnit) {
+          const rate = getDefaultInstallRate(changes.category, "mid");
+          if (rate) changes.installPricePerUnit = rate;
+        }
         let extra = {};
         if (current.purchased) {
           extra = syncPurchaseEntry(current, changes, procurement, onAddPurchase, onDeletePurchase);
@@ -1787,8 +1852,10 @@
       const addItem = () => {
         onProcurementChange([...procurement, {
           id: uid(), item:"", vendor:"", project:"",
-          category: matCats[0] || PURCHASE_CATS[0], purchased:false,
+          category: matCats[0] || "", purchased:false,
           purchaseDate:"", estimatedAmount:"", actualAmount:"", purchaseId:null,
+          qty:"", unit: units[0] || "SF", pricePerUnit:"",
+          includeInstall:false, installPricePerUnit:"",
         }]);
       };
 
@@ -1801,8 +1868,14 @@
       // ── summary stats ───────────────────────────────────────────────────────
       const pending   = procurement.filter(p => !p.purchased);
       const purchased = procurement.filter(p =>  p.purchased);
-      const totalEst  = procurement.reduce((s,p) => s + (parseFloat(p.estimatedAmount)||0), 0);
-      const totalAct  = purchased.reduce((s,p)   => s + (parseFloat(p.actualAmount) || parseFloat(p.estimatedAmount)||0), 0);
+      const getItemEst = p => {
+        const q = parseFloat(p.qty)||0; const ppu = parseFloat(p.pricePerUnit)||0;
+        const mat = q > 0 && ppu > 0 ? q*ppu : parseFloat(p.estimatedAmount)||0;
+        const install = p.includeInstall ? (q > 0 ? q*(parseFloat(p.installPricePerUnit)||0) : 0) : 0;
+        return mat + install;
+      };
+      const totalEst  = procurement.reduce((s,p) => s + getItemEst(p), 0);
+      const totalAct  = purchased.reduce((s,p)   => s + (parseFloat(p.actualAmount) || getItemEst(p)), 0);
 
       const CELL   = "px-2 py-2 text-[11px] text-gray-600 border-t border-gray-100";
       const HDCELL = "px-2 py-2.5 text-[10px] font-bold uppercase tracking-wider text-gray-400 bg-gray-50 text-left whitespace-nowrap";
@@ -1854,40 +1927,55 @@
                 <p className="text-xs text-gray-400 mt-1">Click "Add Item" to build your materials list. Estimated amounts feed the Estimate tab.</p>
               </div>
             ) : (
-              <table className="w-full" style={{tableLayout:"fixed"}}>
+              <div className="overflow-x-auto">
+              <table className="w-full" style={{tableLayout:"fixed", minWidth:900}}>
                 <colgroup>
-                  <col style={{width:"4%"}}/>
-                  <col style={{width:"18%"}}/>
-                  <col style={{width:"11%"}}/>
-                  <col style={{width:"10%"}}/>
-                  <col style={{width:"15%"}}/>
-                  <col style={{width:"10%"}}/>
-                  <col style={{width:"11%"}}/>
-                  <col style={{width:"11%"}}/>
-                  <col style={{width:"5%"}}/>
+                  <col style={{width:32}}/>{/* ✓ purchased */}
+                  <col style={{width:"18%"}}/>{/* Item */}
+                  <col style={{width:"12%"}}/>{/* Sub-Assembly */}
+                  <col style={{width:70}}/>{/* Qty */}
+                  <col style={{width:58}}/>{/* Unit */}
+                  <col style={{width:80}}/>{/* $/Unit */}
+                  <col style={{width:90}}/>{/* Est. Total */}
+                  <col style={{width:36}}/>{/* Install ✓ */}
+                  <col style={{width:80}}/>{/* Install $/Unit */}
+                  <col style={{width:"10%"}}/>{/* Vendor */}
+                  <col style={{width:110}}/>{/* Date */}
+                  <col style={{width:90}}/>{/* Actual */}
+                  <col style={{width:32}}/>{/* Delete */}
                 </colgroup>
                 <thead>
                   <tr>
                     <th className={HDCELL}></th>
                     <th className={HDCELL}>Item</th>
-                    <th className={HDCELL}>Vendor</th>
-                    <th className={HDCELL}>Project</th>
                     <th className={HDCELL}>Sub-Assembly</th>
+                    <th className={HDCELL + " text-right"}>Qty</th>
+                    <th className={HDCELL}>Unit</th>
+                    <th className={HDCELL + " text-right"}>$/Unit</th>
+                    <th className={HDCELL + " text-right"}>Est. Total</th>
+                    <th className={HDCELL} title="Include installation labor">Install</th>
+                    <th className={HDCELL + " text-right"}>$/Unit Install</th>
+                    <th className={HDCELL}>Vendor</th>
                     <th className={HDCELL}>Date</th>
-                    <th className={HDCELL + " text-right"}>Est. Amount</th>
-                    <th className={HDCELL + " text-right"}>Actual Amount</th>
+                    <th className={HDCELL + " text-right"}>Actual</th>
                     <th className={HDCELL}></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {procurement.map(item => (
+                  {procurement.map(item => {
+                    const qty = parseFloat(item.qty)||0;
+                    const ppu = parseFloat(item.pricePerUnit)||0;
+                    const computedEst = qty > 0 && ppu > 0 ? qty*ppu : parseFloat(item.estimatedAmount)||0;
+                    const installTotal = item.includeInstall && qty > 0 ? qty*(parseFloat(item.installPricePerUnit)||0) : 0;
+                    const rowTotal = computedEst + installTotal;
+                    return (
                     <tr key={item.id}
                       className={`group/row transition-colors ${item.purchased ? "bg-emerald-50/50" : "bg-white hover:bg-gray-50/70"}`}>
 
                       {/* Checkbox */}
                       <td className={CELL + " text-center"}>
                         <input type="checkbox" checked={item.purchased} onChange={() => togglePurchased(item)}
-                          title={item.purchased ? "Mark as pending" : "Mark as purchased — logs Actual to Tracker"}
+                          title={item.purchased ? "Mark as pending" : "Mark as purchased"}
                           className="w-4 h-4 cursor-pointer rounded" style={{accentColor:"#10b981"}}/>
                       </td>
 
@@ -1898,29 +1986,7 @@
                           className={`w-full bg-transparent outline-none text-[12px] font-medium focus:ring-0 truncate ${item.purchased ? "line-through text-gray-400" : "text-gray-800"}`}/>
                       </td>
 
-                      {/* Vendor */}
-                      <td className={CELL}>
-                        <input type="text" value={item.vendor} placeholder="Vendor…"
-                          onChange={e => updateItem(item.id, {vendor: e.target.value})}
-                          className="w-full bg-transparent outline-none text-[11px] text-gray-600 focus:ring-0 truncate"/>
-                      </td>
-
-                      {/* Project */}
-                      <td className={CELL}>
-                        {projects.length > 0 ? (
-                          <select value={item.project} onChange={e => updateItem(item.id, {project: e.target.value})}
-                            className="w-full bg-transparent outline-none text-[11px] text-gray-600 focus:ring-0 cursor-pointer">
-                            <option value="">— None —</option>
-                            {projects.map(p => <option key={p.id} value={p.name}>{p.name}</option>)}
-                          </select>
-                        ) : (
-                          <input type="text" value={item.project} placeholder="Project…"
-                            onChange={e => updateItem(item.id, {project: e.target.value})}
-                            className="w-full bg-transparent outline-none text-[11px] text-gray-600 focus:ring-0 truncate"/>
-                        )}
-                      </td>
-
-                      {/* Sub-Assembly — material-only sub-assemblies from estimate */}
+                      {/* Sub-Assembly */}
                       <td className={CELL}>
                         <select value={item.category} onChange={e => updateItem(item.id, {category: e.target.value})}
                           className="w-full bg-transparent outline-none text-[11px] text-gray-600 focus:ring-0 cursor-pointer truncate">
@@ -1929,34 +1995,90 @@
                         </select>
                       </td>
 
-                      {/* Date (purchase date) */}
+                      {/* Qty */}
+                      <td className={CELL + " text-right"}>
+                        <input type="number" min="0" step="any" value={item.qty} placeholder="0"
+                          onChange={e => updateItem(item.id, {qty: e.target.value})}
+                          className="w-full bg-transparent outline-none text-[11px] text-right font-semibold text-gray-800 focus:ring-0 tabular-nums"/>
+                      </td>
+
+                      {/* Unit */}
+                      <td className={CELL}>
+                        <select value={item.unit || units[0]} onChange={e => updateItem(item.id, {unit: e.target.value})}
+                          className="w-full bg-transparent outline-none text-[11px] text-gray-600 focus:ring-0 cursor-pointer">
+                          {units.map(u => <option key={u} value={u}>{u}</option>)}
+                        </select>
+                      </td>
+
+                      {/* $/Unit */}
+                      <td className={CELL + " text-right"}>
+                        <div className="flex items-center justify-end gap-0.5">
+                          <span className="text-gray-400 text-[10px]">$</span>
+                          <input type="number" min="0" step="0.01" value={item.pricePerUnit} placeholder="0"
+                            onChange={e => updateItem(item.id, {pricePerUnit: e.target.value})}
+                            className="w-full bg-transparent outline-none text-[11px] text-right text-gray-700 focus:ring-0 tabular-nums"/>
+                        </div>
+                      </td>
+
+                      {/* Est. Total — computed or manual */}
+                      <td className={CELL + " text-right"}>
+                        {qty > 0 && ppu > 0 ? (
+                          <span className="text-[11px] font-semibold text-blue-700 tabular-nums">{fmtUSD(computedEst)}</span>
+                        ) : (
+                          <div className="flex items-center justify-end gap-0.5">
+                            <span className="text-gray-400 text-[10px]">$</span>
+                            <input type="number" min="0" step="0.01" value={item.estimatedAmount} placeholder="0"
+                              onChange={e => updateItem(item.id, {estimatedAmount: e.target.value})}
+                              title="Enter manually or set Qty + $/Unit to auto-calculate"
+                              className="w-full bg-transparent outline-none text-[11px] text-right font-semibold text-blue-700 focus:ring-0 tabular-nums"/>
+                          </div>
+                        )}
+                      </td>
+
+                      {/* Include Install checkbox */}
+                      <td className={CELL + " text-center"}>
+                        <input type="checkbox" checked={!!item.includeInstall}
+                          onChange={e => updateItem(item.id, {includeInstall: e.target.checked})}
+                          title="Include installation labor on the Estimate tab"
+                          className="w-4 h-4 cursor-pointer rounded" style={{accentColor:"#3b82f6"}}/>
+                      </td>
+
+                      {/* Install $/Unit — only editable when install is checked */}
+                      <td className={CELL + " text-right"}>
+                        {item.includeInstall ? (
+                          <div className="flex items-center justify-end gap-0.5">
+                            <span className="text-gray-400 text-[10px]">$</span>
+                            <input type="number" min="0" step="0.01" value={item.installPricePerUnit} placeholder="0"
+                              onChange={e => updateItem(item.id, {installPricePerUnit: e.target.value})}
+                              title="Install labor rate per unit"
+                              className="w-full bg-transparent outline-none text-[11px] text-right font-semibold text-indigo-700 focus:ring-0 tabular-nums"/>
+                          </div>
+                        ) : (
+                          <span className="text-gray-300 text-[10px]">—</span>
+                        )}
+                      </td>
+
+                      {/* Vendor */}
+                      <td className={CELL}>
+                        <input type="text" value={item.vendor} placeholder="Vendor…"
+                          onChange={e => updateItem(item.id, {vendor: e.target.value})}
+                          className="w-full bg-transparent outline-none text-[11px] text-gray-600 focus:ring-0 truncate"/>
+                      </td>
+
+                      {/* Date */}
                       <td className={CELL}>
                         <input type="date" value={item.purchaseDate}
                           onChange={e => updateItem(item.id, {purchaseDate: e.target.value})}
                           className="w-full bg-transparent outline-none text-[11px] text-gray-500 focus:ring-0"/>
                       </td>
 
-                      {/* Est. Amount — feeds Estimate tab */}
-                      <td className={CELL + " text-right"}>
-                        <div className="flex items-center justify-end gap-0.5">
-                          <span className="text-gray-400 text-[10px]">$</span>
-                          <input type="number" min="0" step="0.01" value={item.estimatedAmount} placeholder="0"
-                            onChange={e => updateItem(item.id, {estimatedAmount: e.target.value})}
-                            title="Estimated amount — feeds the Estimate tab"
-                            className="w-full bg-transparent outline-none text-[11px] text-right font-semibold text-blue-700 focus:ring-0 tabular-nums"
-                            style={{maxWidth:72}}/>
-                        </div>
-                      </td>
-
-                      {/* Actual Amount — logged to Tracker on purchase */}
+                      {/* Actual Amount */}
                       <td className={CELL + " text-right"}>
                         <div className="flex items-center justify-end gap-0.5">
                           <span className="text-gray-400 text-[10px]">$</span>
                           <input type="number" min="0" step="0.01" value={item.actualAmount || ""} placeholder="0"
                             onChange={e => updateItem(item.id, {actualAmount: e.target.value})}
-                            title="Actual amount paid — logged to Tracker when checked off"
-                            className={`w-full bg-transparent outline-none text-[11px] text-right font-semibold focus:ring-0 tabular-nums ${item.purchased ? "text-emerald-700" : "text-gray-500"}`}
-                            style={{maxWidth:72}}/>
+                            className={`w-full bg-transparent outline-none text-[11px] text-right font-semibold focus:ring-0 tabular-nums ${item.purchased ? "text-emerald-700" : "text-gray-500"}`}/>
                         </div>
                       </td>
 
@@ -1968,18 +2090,20 @@
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
 
                   {/* Totals footer */}
                   {procurement.length > 0 && (
                     <tr className="border-t-2 border-gray-200 bg-gray-50">
                       <td colSpan={6} className="px-3 py-2.5 text-[11px] font-semibold text-gray-500">
-                        {purchased.length} of {procurement.length} purchased · est. amounts feed Estimate tab
+                        {purchased.length} of {procurement.length} purchased · feeds Estimate tab
                       </td>
                       <td className="px-2 py-2.5 text-right">
                         <div className="text-[10px] text-gray-400">Est. Total</div>
                         <div className="text-sm font-bold text-blue-700 tabular-nums">{fmtUSD(totalEst)}</div>
                       </td>
+                      <td colSpan={4}/>
                       <td className="px-2 py-2.5 text-right">
                         <div className="text-[10px] text-gray-400">Actual Total</div>
                         <div className="text-sm font-bold text-emerald-700 tabular-nums">{fmtUSD(totalAct)}</div>
@@ -1989,6 +2113,7 @@
                   )}
                 </tbody>
               </table>
+              </div>
             )}
           </div>
         </div>
@@ -2023,6 +2148,19 @@
       const [editingGrpId, setEditingGrpId] = useState(null);
       const [editingGrpName, setEditingGrpName] = useState("");
       const [newGrpName, setNewGrpName] = useState("");
+
+      // ── Units state ────────────────────────────────────────────────────────
+      const units = config.units || ["SF", "LF", "EA"];
+      const [newUnit, setNewUnit] = useState("");
+      const addUnit = () => {
+        const t = newUnit.trim().toUpperCase(); if (!t || units.includes(t)) return;
+        onConfigChange({ ...config, units: [...units, t] });
+        setNewUnit("");
+      };
+      const removeUnit = (u) => {
+        if (units.length <= 1) return; // always keep at least one
+        onConfigChange({ ...config, units: units.filter(x => x !== u) });
+      };
 
       // ── Pricing edit state ─────────────────────────────────────────────────
       const [editingRateKey, setEditingRateKey] = useState(null);
@@ -2253,7 +2391,27 @@
                 </div>
               </section>
 
-              {/* ── Section 2: Default Pricing Reference ── */}
+              {/* ── Section 2: Procurement Units ── */}
+              <section>
+                <h3 className="text-sm font-bold text-gray-800 mb-0.5">Procurement Units</h3>
+                <p className="text-xs text-gray-400 mb-3">Units available in the Procurement tab quantity dropdown.</p>
+                <div className="flex flex-wrap gap-2 mb-3">
+                  {units.map(u => (
+                    <span key={u} className="flex items-center gap-1 bg-gray-100 text-gray-700 text-xs font-semibold px-2.5 py-1.5 rounded-lg">
+                      {u}
+                      <button onClick={()=>removeUnit(u)} className="text-gray-400 hover:text-red-400 ml-0.5 leading-none">×</button>
+                    </span>
+                  ))}
+                </div>
+                <div className="flex gap-2">
+                  <input value={newUnit} onChange={e=>setNewUnit(e.target.value.toUpperCase())} placeholder="New unit (e.g. SY)"
+                    onKeyDown={e=>{if(e.key==="Enter")addUnit();}}
+                    className={INP + " w-32"} maxLength={6}/>
+                  <button onClick={addUnit} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-900 text-white text-xs font-semibold rounded-lg transition-colors">Add</button>
+                </div>
+              </section>
+
+              {/* ── Section 3: Default Pricing Reference ── */}
               <section>
                 <h3 className="text-sm font-bold text-gray-800 mb-0.5">Default Pricing Reference</h3>
                 <p className="text-xs text-gray-400 mb-3">Click any row to edit rates. Changes apply globally across all projects.</p>
@@ -2872,7 +3030,7 @@
                 procurement={procurement} onProcurementChange={setProcurement}
                 purchases={purchases} onAddPurchase={addPurchase} onDeletePurchase={deletePurchase}
                 planData={planData} customAssemblies={customAssemblies}
-                asmOverrides={asmOverrides}/>
+                asmOverrides={asmOverrides} config={config}/>
             </div>
           ) : (
             /* Plan / Gantt view */
