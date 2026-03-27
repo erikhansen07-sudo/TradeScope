@@ -306,7 +306,7 @@
       return null;
     }
 
-    function computeLineItems(asmDef, inputs, tier, overrides = {}, costTypeOverrides = {}) {
+    function computeLineItems(asmDef, inputs, tier, overrides = {}, costTypeOverrides = {}, globalRateOverrides = {}) {
       const ctx = { ...inputs };
       if (asmDef.calculations)
         for (const [k, f] of Object.entries(asmDef.calculations)) ctx[k] = evalExpr(f, ctx);
@@ -320,7 +320,9 @@
         if (liDef.rateKey || liDef.rateSelector) {
           rateKey = resolveRateKey(liDef, inputs);
           const r = DB.rates[rateKey]; if (!r) return [];
-          ({ label, unit, category } = r); baseUnitCost = r[tier];
+          const gro = (globalRateOverrides && globalRateOverrides[rateKey]) || {};
+          label = gro.label ?? r.label; unit = r.unit; category = r.category;
+          baseUnitCost = gro[tier] !== undefined ? gro[tier] : r[tier];
         } else if (liDef.customItem) {
           rateKey = `__c_${asmDef.id}_${i}`;
           ({ label, unit, category } = liDef.customItem);
@@ -342,7 +344,7 @@
     const SK_V2 = "tradescope_v2";
     // Multi-project key (v3)
     const SK_V3 = "tradescope_v3";
-    const DEFAULT_CONFIG = { customCategories: [], customAssemblies: [], asmOverrides: {} };
+    const DEFAULT_CONFIG = { customAssemblies: [], asmOverrides: {}, masterGroups: null, globalRateOverrides: {} };
 
     // Normalize a customCategory entry — older saves stored plain strings; new format is { name, costType }
     const normCat = c => (typeof c === "string") ? { name: c, costType: "labor" } : c;
@@ -364,8 +366,10 @@
           const d = JSON.parse(r);
           if (!d.config) d.config = {...DEFAULT_CONFIG};
           if (!d.config.asmOverrides) d.config.asmOverrides = {};
-          // Normalize customCategories to object format
-          d.config.customCategories = (d.config.customCategories || []).map(normCat);
+          if (!d.config.globalRateOverrides) d.config.globalRateOverrides = {};
+          if (d.config.masterGroups === undefined) d.config.masterGroups = null;
+          // Migrate legacy customCategories (no longer used, discard)
+          delete d.config.customCategories;
           // Normalize procurement items in all projects
           (d.projects || []).forEach(proj => {
             if (proj.procurement) proj.procurement = proj.procurement.map(normProc);
@@ -405,6 +409,19 @@
     const OPTION_LABELS = { lvp:"LVP (Luxury Vinyl Plank)", hardwood:"Hardwood", tile:"Tile", none:"None", light:"Light", moderate:"Moderate", heavy:"Heavy", standard:"Standard TI", selective:"Selective", basic:"Basic Painted Base Cabinetry", service_counter:"Retail Service Counter", midgrade_casework:"Mid-Grade Laminate Casework", premium_custom:"Premium Custom Millwork" };
     const GROUPS = ["Structural","Finishes","Demo","Ceilings","MEP","Specialties","Allowances"];
     const GROUP_COLOR = { Structural:"bg-slate-100 text-slate-700", Finishes:"bg-emerald-50 text-emerald-700", Demo:"bg-red-50 text-red-700", Ceilings:"bg-sky-50 text-sky-700", MEP:"bg-amber-50 text-amber-700", Specialties:"bg-purple-50 text-purple-700", Allowances:"bg-rose-50 text-rose-700" };
+    const GROUP_COLOR_EXTRA = ["bg-teal-50 text-teal-700","bg-indigo-50 text-indigo-700","bg-orange-50 text-orange-700","bg-pink-50 text-pink-700","bg-lime-50 text-lime-700"];
+
+    // Returns ordered [{id, name}] for master assemblies, respecting config overrides
+    const getEffectiveGroups = (config) => {
+      if (config && config.masterGroups) return config.masterGroups;
+      return GROUPS.map(g => ({id: g, name: g}));
+    };
+    // Returns a tailwind color class for a group id
+    const getGroupColor = (groupId, effectiveGroups) => {
+      if (GROUP_COLOR[groupId]) return GROUP_COLOR[groupId];
+      const idx = (effectiveGroups || []).findIndex(g => g.id === groupId);
+      return GROUP_COLOR_EXTRA[idx % GROUP_COLOR_EXTRA.length] || "bg-gray-100 text-gray-600";
+    };
 
     // All categories (labor + material)
     const _BASE_CATS = (() => {
@@ -562,9 +579,10 @@
       );
     }
 
-    function AssemblyPalette({ onAdd, customAssemblies = [], asmOverrides = {} }) {
+    function AssemblyPalette({ onAdd, customAssemblies = [], asmOverrides = {}, effectiveGroups = [] }) {
       const byGroup = {};
-      GROUPS.forEach(g => {
+      effectiveGroups.forEach(grp => {
+        const g = grp.id;
         const builtIn = DB.assemblies.map(a => applyAsmOverrides(a, asmOverrides)).filter(a => a.group === g);
         const custom  = customAssemblies.filter(ca => (asmOverrides[ca.id]?.group ?? ca.group) === g).map(ca => applyAsmOverrides(customAsmToDef(ca), asmOverrides)).filter(Boolean);
         byGroup[g] = [...builtIn, ...custom];
@@ -575,11 +593,11 @@
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">Assembly Palette</p>
           </div>
           <div className="flex-1 overflow-y-auto px-2 py-2 space-y-3">
-            {GROUPS.map(g => (
-              <div key={g}>
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 px-1 mb-1">{g}</p>
+            {effectiveGroups.map(grp => (
+              <div key={grp.id}>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 px-1 mb-1">{grp.name}</p>
                 <div className="space-y-0.5">
-                  {byGroup[g].map(def => (
+                  {(byGroup[grp.id]||[]).map(def => (
                     <button key={def.id} onClick={() => onAdd(def)}
                       className={`w-full text-left flex items-center gap-2 px-2.5 py-2 text-xs rounded-md border transition-all ${def.isCustom ? "border-blue-200 bg-blue-50/50 text-blue-800 hover:bg-blue-100 hover:border-blue-400" : "border-gray-200 bg-white text-gray-700 hover:bg-blue-50 hover:text-blue-700 hover:border-blue-300"}`}>
                       <IconPlus /> <span className="truncate font-medium">{def.name}</span>
@@ -722,9 +740,9 @@
       );
     }
 
-    function AssemblyCard({ instance, asmDef, tier, rateOverrides, costTypeOverrides, onEdit, onRemove, onRateOverride, onResetRateOverride, onCostTypeChange }) {
+    function AssemblyCard({ instance, asmDef, tier, rateOverrides, costTypeOverrides, globalRateOverrides, onEdit, onRemove, onRateOverride, onResetRateOverride, onCostTypeChange }) {
       const [collapsed, setCollapsed] = useState(false);
-      const lineItems = useMemo(() => computeLineItems(asmDef, instance.inputs, tier, rateOverrides, costTypeOverrides), [asmDef, instance.inputs, tier, rateOverrides, costTypeOverrides]);
+      const lineItems = useMemo(() => computeLineItems(asmDef, instance.inputs, tier, rateOverrides, costTypeOverrides, globalRateOverrides), [asmDef, instance.inputs, tier, rateOverrides, costTypeOverrides, globalRateOverrides]);
       const subtotal = lineItems.reduce((s,i) => s+i.total, 0);
       const summary = asmDef.inputs.filter(i=>(i.type==="number"||i.type==="percent")&&instance.inputs[i.key]).slice(0,2)
         .map(i=>{ const v=instance.inputs[i.key]; const u=i.key.toLowerCase().includes("feet")?(i.key.includes("linear")?" LF":" SF"):""; return `${i.type==="percent"?(v*100).toFixed(0)+"%":v}${u}`; }).join(" · ");
@@ -833,14 +851,14 @@
       );
     }
 
-    function SummaryPanel({ instances, tier, rateOverrides, costTypeOverrides, settings, onSettingsOpen, customAssemblies, procurement, asmOverrides }) {
+    function SummaryPanel({ instances, tier, rateOverrides, costTypeOverrides, globalRateOverrides, settings, onSettingsOpen, customAssemblies, procurement, asmOverrides }) {
       const allItems = useMemo(() => {
         const asmItems = instances.flatMap(inst => {
           const def = getEffectiveDef(inst.assemblyId, customAssemblies, asmOverrides); if(!def) return [];
-          return computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides);
+          return computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides, globalRateOverrides);
         });
         return [...asmItems, ...getProcurementLineItems(procurement)];
-      }, [instances, tier, rateOverrides, costTypeOverrides, customAssemblies, asmOverrides, procurement]);
+      }, [instances, tier, rateOverrides, costTypeOverrides, globalRateOverrides, customAssemblies, asmOverrides, procurement]);
 
       const direct = allItems.reduce((s,i)=>s+i.total, 0);
       const contingency = direct * settings.contingencyPct;
@@ -963,7 +981,7 @@
       );
     }
 
-    function TrackerView({ instances, tier, rateOverrides, costTypeOverrides, settings, purchases, onAddPurchase, onDeletePurchase, catProgress, onProgressChange, customCategories, customAssemblies, procurement, asmOverrides }) {
+    function TrackerView({ instances, tier, rateOverrides, costTypeOverrides, globalRateOverrides, settings, purchases, onAddPurchase, onDeletePurchase, catProgress, onProgressChange, customAssemblies, procurement, asmOverrides }) {
       // Assembly names from the current estimate (for purchase category dropdown)
       const asmCats = useMemo(() => getAsmNamesFromEstimate(instances, customAssemblies, asmOverrides), [instances, customAssemblies, asmOverrides]);
       const [form, setForm] = useState({ vendor:"", description:"", category: "", amount:"", date: new Date().toISOString().split("T")[0], notes:"" });
@@ -976,7 +994,7 @@
         // Assembly instances → keyed by assembly name
         instances.forEach(inst => {
           const def = getEffectiveDef(inst.assemblyId, customAssemblies, asmOverrides); if (!def) return;
-          const items = computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides);
+          const items = computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides, globalRateOverrides);
           const total = items.reduce((s, i) => s + i.total, 0);
           b[def.name] = (b[def.name] || 0) + total;
           // labor if ANY item is labor, otherwise material
@@ -990,7 +1008,7 @@
           ct[item.category] = "material";
         });
         return { budgetByAsm: b, costTypeByAsm: ct };
-      }, [instances, tier, rateOverrides, costTypeOverrides, customAssemblies, asmOverrides, procurement]);
+      }, [instances, tier, rateOverrides, costTypeOverrides, globalRateOverrides, customAssemblies, asmOverrides, procurement]);
 
       const budgetTotal = Object.values(budgetByAsm).reduce((s, v) => s + v, 0);
 
@@ -1613,7 +1631,7 @@
     // =========================================================================
     // PROCUREMENT VIEW
     // =========================================================================
-    function ProcurementView({ procurement, onProcurementChange, purchases, onAddPurchase, onDeletePurchase, planData, customCategories, customAssemblies, asmOverrides }) {
+    function ProcurementView({ procurement, onProcurementChange, purchases, onAddPurchase, onDeletePurchase, planData, customAssemblies, asmOverrides }) {
       const todayStr = new Date().toISOString().split("T")[0];
       const projects = planData?.projects ?? [];
       // Procurement shows sub-assembly names that have material line items
@@ -1886,15 +1904,25 @@
     // CONFIG VIEW (global — custom assemblies, custom categories, default pricing)
     // =========================================================================
     function ConfigView({ config, onConfigChange, onClose }) {
-      const customCategories = (config.customCategories || []).map(normCat);
-      const { customAssemblies = [] } = config;
       const asmOverrides = config.asmOverrides ?? {};
-      const [newCat, setNewCat] = useState("");
-      const [newCatType, setNewCatType] = useState("material"); // default to material since procurement is the use-case
-      const [newAsm, setNewAsm] = useState({ name:"", group: GROUPS[0], category:"", unit:"SF", cost:"", costType:"labor" });
+      const globalRateOverrides = config.globalRateOverrides ?? {};
+      const effGroups = getEffectiveGroups(config); // [{id, name}]
+
+      // ── Assembly config state ──────────────────────────────────────────────
       const [editingAsmId, setEditingAsmId] = useState(null);
       const [editingAsmVals, setEditingAsmVals] = useState({});
+      const [newSubName, setNewSubName] = useState("");
+      const [newSubGroup, setNewSubGroup] = useState(effGroups[0]?.id ?? "");
+      const [newSubType, setNewSubType] = useState("labor");
+      const [editingGrpId, setEditingGrpId] = useState(null);
+      const [editingGrpName, setEditingGrpName] = useState("");
+      const [newGrpName, setNewGrpName] = useState("");
 
+      // ── Pricing edit state ─────────────────────────────────────────────────
+      const [editingRateKey, setEditingRateKey] = useState(null);
+      const [editingRateVals, setEditingRateVals] = useState({});
+
+      // ── Assembly override helpers ──────────────────────────────────────────
       const updateAsmOverride = (id, changes) => {
         const current = asmOverrides[id] || {};
         onConfigChange({ ...config, asmOverrides: { ...asmOverrides, [id]: { ...current, ...changes } } });
@@ -1903,55 +1931,94 @@
         const next = { ...asmOverrides }; delete next[id];
         onConfigChange({ ...config, asmOverrides: next });
       };
-      const startEditAsm = (id, currentName, currentGroup) => {
-        setEditingAsmId(id);
-        setEditingAsmVals({ name: currentName, group: currentGroup });
+      const startEditAsm = (a) => {
+        setEditingAsmId(a.id);
+        setEditingAsmVals({ name: asmOverrides[a.id]?.name ?? a.name, group: asmOverrides[a.id]?.group ?? a.group });
       };
-      const saveEditAsm = (id, originalName, originalGroup) => {
+      const saveEditAsm = (a) => {
         const ov = {};
-        if (editingAsmVals.name !== originalName) ov.name = editingAsmVals.name;
-        if (editingAsmVals.group !== originalGroup) ov.group = editingAsmVals.group;
-        if (Object.keys(ov).length > 0) updateAsmOverride(id, ov);
-        else resetAsmOverride(id); // remove override if back to original
+        if (editingAsmVals.name !== a.name) ov.name = editingAsmVals.name;
+        if (editingAsmVals.group !== a.group) ov.group = editingAsmVals.group;
+        if (Object.keys(ov).length > 0) updateAsmOverride(a.id, ov);
+        else resetAsmOverride(a.id);
         setEditingAsmId(null);
       };
 
-      const addCat = () => {
-        const t = newCat.trim(); if (!t) return;
-        if (customCategories.some(c => c.name === t)) return;
-        onConfigChange({ ...config, customCategories: [...customCategories, { name: t, costType: newCatType }] });
-        setNewCat("");
+      // ── Master group helpers ───────────────────────────────────────────────
+      const saveEditGrp = (id) => {
+        const t = editingGrpName.trim(); if (!t) { setEditingGrpId(null); return; }
+        const updated = effGroups.map(g => g.id === id ? { id, name: t } : g);
+        onConfigChange({ ...config, masterGroups: updated });
+        setEditingGrpId(null);
       };
-      const delCat = (c) => onConfigChange({ ...config, customCategories: customCategories.filter(x => x.name !== c.name) });
-      const toggleCatType = (c) => onConfigChange({ ...config, customCategories: customCategories.map(x => x.name === c.name ? {...x, costType: x.costType === "labor" ? "material" : "labor"} : x) });
+      const addGroup = () => {
+        const t = newGrpName.trim(); if (!t) return;
+        const id = t.toLowerCase().replace(/\s+/g, "_") + "_" + Date.now();
+        onConfigChange({ ...config, masterGroups: [...effGroups, { id, name: t }] });
+        setNewGrpName("");
+      };
+      const removeGroup = (id) => {
+        // Move any assemblies assigned to this group to the first remaining group
+        const remaining = effGroups.filter(g => g.id !== id);
+        const fallback = remaining[0]?.id ?? "";
+        const newOv = { ...asmOverrides };
+        DB.assemblies.forEach(a => {
+          const effGrp = newOv[a.id]?.group ?? a.group;
+          if (effGrp === id) { newOv[a.id] = { ...(newOv[a.id]||{}), group: fallback }; }
+        });
+        onConfigChange({ ...config, masterGroups: remaining, asmOverrides: newOv });
+      };
 
-      const addAsm = () => {
-        if (!newAsm.name.trim() || !newAsm.category.trim() || !newAsm.cost) return;
-        const item = { ...newAsm, id: uid(), name: newAsm.name.trim(), category: newAsm.category.trim(), cost: parseFloat(newAsm.cost)||0 };
+      // ── Add custom sub-assembly ────────────────────────────────────────────
+      const addSubAsm = () => {
+        const t = newSubName.trim(); if (!t) return;
+        const item = { id: uid(), name: t, group: newSubGroup, costType: newSubType,
+          lineItems: [{ label: t, rateKey: null, qty: 1, unit: "LS",
+            customItem: true, unitCost: 0, costType: newSubType }]
+        };
+        const { customAssemblies = [] } = config;
         onConfigChange({ ...config, customAssemblies: [...customAssemblies, item] });
-        setNewAsm({ name:"", group: GROUPS[0], category:"", unit:"SF", cost:"", costType:"labor" });
+        setNewSubName("");
       };
-      const delAsm = (id) => onConfigChange({ ...config, customAssemblies: customAssemblies.filter(a => a.id !== id) });
+      const delCustomAsm = (id) => {
+        const { customAssemblies = [] } = config;
+        onConfigChange({ ...config, customAssemblies: customAssemblies.filter(a => a.id !== id) });
+      };
 
-      // Group default rates for display
-      const ratesByGroup = {};
-      Object.entries(DB.rates).forEach(([k, r]) => {
-        if (!ratesByGroup[r.category]) ratesByGroup[r.category] = [];
-        ratesByGroup[r.category].push({ key: k, ...r });
-      });
+      // ── Rate override helpers ──────────────────────────────────────────────
+      const startEditRate = (k, r) => {
+        const ov = globalRateOverrides[k] || {};
+        setEditingRateKey(k);
+        setEditingRateVals({ low: ov.low ?? r.low, mid: ov.mid ?? r.mid, high: ov.high ?? r.high });
+      };
+      const saveEditRate = (k) => {
+        const r = DB.rates[k];
+        const ov = {};
+        const lo = parseFloat(editingRateVals.low); if (!isNaN(lo) && lo !== r.low) ov.low = lo;
+        const mi = parseFloat(editingRateVals.mid); if (!isNaN(mi) && mi !== r.mid) ov.mid = mi;
+        const hi = parseFloat(editingRateVals.high); if (!isNaN(hi) && hi !== r.high) ov.high = hi;
+        const next = { ...globalRateOverrides };
+        if (Object.keys(ov).length > 0) next[k] = ov; else delete next[k];
+        onConfigChange({ ...config, globalRateOverrides: next });
+        setEditingRateKey(null);
+      };
+      const resetRate = (k) => {
+        const next = { ...globalRateOverrides }; delete next[k];
+        onConfigChange({ ...config, globalRateOverrides: next });
+      };
 
       const SH = "text-[10px] font-bold uppercase tracking-wider text-gray-400";
-      const INP = "px-2.5 py-1.5 border border-gray-300 rounded-lg text-sm outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent";
+      const INP = "px-2 py-1 border border-gray-300 rounded text-xs outline-none focus:ring-1 focus:ring-blue-400";
+      const INP_SM = "w-16 px-1.5 py-1 border border-blue-300 rounded text-xs text-right outline-none focus:ring-1 focus:ring-blue-400 tabular-nums";
+
+      const allEffGroups = effGroups; // alias for clarity
 
       return (
         <div className="fixed inset-0 bg-black/50 flex items-start justify-center z-50 overflow-auto py-8 px-4" onClick={onClose}>
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl" onClick={e=>e.stopPropagation()}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl" onClick={e=>e.stopPropagation()}>
             {/* Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200">
-              <div>
-                <h2 className="text-lg font-bold text-gray-900">Configuration</h2>
-                <p className="text-xs text-gray-400 mt-0.5">Custom assemblies and categories are shared across all projects</p>
-              </div>
+              <h2 className="text-lg font-bold text-gray-900">Configuration</h2>
               <button onClick={onClose} className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100">
                 <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12"/></svg>
               </button>
@@ -1959,210 +2026,183 @@
 
             <div className="p-6 space-y-8">
 
-              {/* Custom Assembly Items */}
+              {/* ── Section 1: Assembly Configuration ── */}
               <section>
-                <h3 className="text-sm font-bold text-gray-800 mb-1">Custom Assembly Items</h3>
-                <p className="text-xs text-gray-400 mb-4">Add custom line items that appear in the estimate palette under their group. Their category flows to Tracker and Procurement automatically.</p>
-                <div className="bg-gray-50 rounded-xl p-4 mb-4">
-                  <div className="grid grid-cols-6 gap-2 mb-2">
-                    <input value={newAsm.name} placeholder="Item name" onChange={e=>setNewAsm(a=>({...a,name:e.target.value}))}
-                      className={INP + " col-span-2"}/>
-                    <select value={newAsm.group} onChange={e=>setNewAsm(a=>({...a,group:e.target.value}))} className={INP}>
-                      {GROUPS.map(g=><option key={g} value={g}>{g}</option>)}
-                    </select>
-                    <input value={newAsm.category} placeholder="Category" onChange={e=>setNewAsm(a=>({...a,category:e.target.value}))}
-                      className={INP}/>
-                    <select value={newAsm.unit} onChange={e=>setNewAsm(a=>({...a,unit:e.target.value}))} className={INP}>
-                      {["SF","LF","EA","HR","LS","SY","CY"].map(u=><option key={u} value={u}>{u}</option>)}
-                    </select>
-                    <input value={newAsm.cost} placeholder="Unit cost $" type="number" min="0" step="0.01"
-                      onChange={e=>setNewAsm(a=>({...a,cost:e.target.value}))} className={INP}/>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <label className={SH}>Type:</label>
-                    {["labor","material"].map(t=>(
-                      <button key={t} onClick={()=>setNewAsm(a=>({...a,costType:t}))}
-                        className={`px-3 py-1 text-xs font-semibold rounded-full transition-colors ${newAsm.costType===t ? (t==="labor"?"bg-blue-100 text-blue-700":"bg-amber-100 text-amber-700") : "bg-gray-200 text-gray-500 hover:bg-gray-300"}`}>
-                        {t==="labor"?"⚙ Labor":"📦 Material"}
-                      </button>
-                    ))}
-                    <div className="flex-1"/>
-                    <button onClick={addAsm} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors">
-                      Add to Palette
-                    </button>
-                  </div>
-                </div>
-                {customAssemblies.length === 0 ? (
-                  <p className="text-xs text-gray-400 text-center py-4">No custom assemblies yet.</p>
-                ) : (
-                  <table className="w-full text-xs" style={{tableLayout:"fixed"}}>
-                    <thead><tr className="text-left border-b border-gray-200">
-                      {["Name","Group","Category","Unit","Cost","Type",""].map((h,i)=><th key={i} className={SH + " pb-2 pr-3"}>{h}</th>)}
-                    </tr></thead>
-                    <tbody>
-                      {customAssemblies.map(ca=>(
-                        <tr key={ca.id} className="border-b border-gray-100 group/row">
-                          <td className="py-2 pr-3 font-medium text-gray-800 truncate">{ca.name}</td>
-                          <td className="py-2 pr-3 text-gray-500">{ca.group}</td>
-                          <td className="py-2 pr-3 text-gray-500 truncate">{ca.category}</td>
-                          <td className="py-2 pr-3 text-gray-500">{ca.unit}</td>
-                          <td className="py-2 pr-3 text-gray-700 font-medium tabular-nums">{fmtUSD2(ca.cost)}</td>
-                          <td className="py-2 pr-3">
-                            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold ${ca.costType==="labor"?"bg-blue-100 text-blue-700":"bg-amber-100 text-amber-700"}`}>
-                              {ca.costType==="labor"?"Labor":"Material"}
-                            </span>
-                          </td>
-                          <td className="py-2 text-right">
-                            <button onClick={()=>delAsm(ca.id)} className="text-gray-300 hover:text-red-400 opacity-0 group-hover/row:opacity-100 transition-opacity"><IconTrash c="w-3.5 h-3.5"/></button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </section>
+                <h3 className="text-sm font-bold text-gray-800 mb-0.5">Assembly Configuration</h3>
+                <p className="text-xs text-gray-400 mb-4">Manage master groups and sub-assemblies. Drag sub-assemblies between groups by changing their group assignment.</p>
 
-              {/* Custom Categories */}
-              <section>
-                <h3 className="text-sm font-bold text-gray-800 mb-1">Custom Budget Categories</h3>
-                <p className="text-xs text-gray-400 mb-3">Extra categories — flag each as Labor or Material. Material categories appear in the Procurement checklist.</p>
-                <div className="flex gap-2 mb-3">
-                  <input value={newCat} placeholder="Category name…" onChange={e=>setNewCat(e.target.value)}
-                    onKeyDown={e=>{if(e.key==="Enter")addCat();}}
+                {/* Master groups list */}
+                <div className="space-y-4">
+                  {allEffGroups.map(grpObj => {
+                    const grpId = grpObj.id;
+                    const grpColor = getGroupColor(grpId, allEffGroups);
+                    // Built-in assemblies assigned to this group
+                    const builtInAsms = DB.assemblies.filter(a => (asmOverrides[a.id]?.group ?? a.group) === grpId);
+                    // Custom assemblies assigned to this group
+                    const { customAssemblies = [] } = config;
+                    const customAsms = customAssemblies.filter(ca => (asmOverrides[ca.id]?.group ?? ca.group) === grpId);
+                    const allAsms = [...builtInAsms.map(a=>({...a, _isBuiltIn:true})), ...customAsms.map(ca=>({...ca, _isCustom:true}))];
+
+                    return (
+                      <div key={grpId} className="rounded-xl border border-gray-200 overflow-hidden">
+                        {/* Group header */}
+                        <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 border-b border-gray-200">
+                          {editingGrpId === grpId ? (
+                            <>
+                              <input value={editingGrpName} onChange={e=>setEditingGrpName(e.target.value)}
+                                onKeyDown={e=>{if(e.key==="Enter")saveEditGrp(grpId);if(e.key==="Escape")setEditingGrpId(null);}}
+                                className="flex-1 px-2 py-0.5 border border-blue-400 rounded text-xs font-semibold focus:outline-none" autoFocus/>
+                              <button onClick={()=>saveEditGrp(grpId)} className="text-blue-500 hover:text-blue-700 text-[10px] font-bold">Save</button>
+                              <button onClick={()=>setEditingGrpId(null)} className="text-gray-400 hover:text-gray-600 text-[10px]">Cancel</button>
+                            </>
+                          ) : (
+                            <>
+                              <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${grpColor}`}>{grpObj.name}</span>
+                              <span className="text-[10px] text-gray-400">{allAsms.length} sub-assemblies</span>
+                              <div className="flex-1"/>
+                              <button onClick={()=>{setEditingGrpId(grpId);setEditingGrpName(grpObj.name);}}
+                                className="text-gray-300 hover:text-blue-400 transition-colors" title="Rename group"><IconEdit c="w-3 h-3"/></button>
+                              {allEffGroups.length > 1 && (
+                                <button onClick={()=>removeGroup(grpId)}
+                                  className="text-gray-300 hover:text-red-400 transition-colors ml-1" title="Remove group"><IconTrash c="w-3 h-3"/></button>
+                              )}
+                            </>
+                          )}
+                        </div>
+                        {/* Sub-assembly rows */}
+                        <div className="divide-y divide-gray-50">
+                          {allAsms.length === 0 && (
+                            <p className="px-4 py-2 text-[11px] text-gray-300 italic">No sub-assemblies yet</p>
+                          )}
+                          {allAsms.map(a => {
+                            const isEditing = editingAsmId === a.id;
+                            const effName = asmOverrides[a.id]?.name ?? a.name;
+                            const isOverridden = !!asmOverrides[a.id];
+                            // Determine costType: custom has .costType; built-in: check if any line item is material
+                            const hasMat = a._isCustom ? a.costType === "material"
+                              : (a.lineItems||[]).some(li => li.customItem || li.costType === "material");
+                            const typeLabel = hasMat ? "Material" : "Labor";
+                            const typeCls = hasMat ? "bg-amber-100 text-amber-700" : "bg-blue-100 text-blue-700";
+                            return (
+                              <div key={a.id} className="flex items-center gap-2 px-4 py-2 hover:bg-gray-50 group/asmrow text-xs">
+                                {isEditing ? (
+                                  <>
+                                    <input value={editingAsmVals.name} onChange={e=>setEditingAsmVals(v=>({...v,name:e.target.value}))}
+                                      onKeyDown={e=>{if(e.key==="Enter")saveEditAsm(a);if(e.key==="Escape")setEditingAsmId(null);}}
+                                      className="flex-1 px-2 py-1 border border-blue-400 rounded text-xs focus:outline-none" autoFocus/>
+                                    <select value={editingAsmVals.group} onChange={e=>setEditingAsmVals(v=>({...v,group:e.target.value}))}
+                                      className="px-1.5 py-1 border border-blue-400 rounded text-xs bg-white focus:outline-none">
+                                      {allEffGroups.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
+                                    </select>
+                                    <button onClick={()=>saveEditAsm(a)} className="text-blue-500 hover:text-blue-700 font-bold text-[10px]">Save</button>
+                                    <button onClick={()=>setEditingAsmId(null)} className="text-gray-400 text-[10px]">Cancel</button>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className={`flex-1 font-medium ${isOverridden?"text-blue-700":"text-gray-800"}`}>{effName}
+                                      {isOverridden && <span className="ml-1 text-[9px] text-blue-400">(edited)</span>}
+                                    </span>
+                                    <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${typeCls}`}>{typeLabel}</span>
+                                    <div className="flex gap-1 opacity-0 group-hover/asmrow:opacity-100 transition-opacity">
+                                      <button onClick={()=>startEditAsm(a)} className="text-gray-400 hover:text-blue-500"><IconEdit c="w-3 h-3"/></button>
+                                      {isOverridden && <button onClick={()=>resetAsmOverride(a.id)} title="Reset" className="text-gray-300 hover:text-amber-500"><IconReset c="w-3 h-3"/></button>}
+                                      {a._isCustom && <button onClick={()=>delCustomAsm(a.id)} className="text-gray-300 hover:text-red-400"><IconTrash c="w-3 h-3"/></button>}
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+
+                {/* Add sub-assembly row */}
+                <div className="mt-3 flex gap-2 items-center">
+                  <input value={newSubName} onChange={e=>setNewSubName(e.target.value)} placeholder="New sub-assembly name…"
+                    onKeyDown={e=>{if(e.key==="Enter")addSubAsm();}}
                     className={INP + " flex-1"}/>
-                  <div className="flex rounded-lg overflow-hidden border border-gray-300 text-xs font-bold">
+                  <select value={newSubGroup} onChange={e=>setNewSubGroup(e.target.value)} className={INP}>
+                    {allEffGroups.map(g=><option key={g.id} value={g.id}>{g.name}</option>)}
+                  </select>
+                  <div className="flex rounded-lg overflow-hidden border border-gray-300 text-[10px] font-bold">
                     {["labor","material"].map(t=>(
-                      <button key={t} onClick={()=>setNewCatType(t)}
-                        className={`px-3 py-1.5 transition-colors ${newCatType===t ? (t==="labor"?"bg-blue-500 text-white":"bg-amber-500 text-white") : "bg-white text-gray-500 hover:bg-gray-50"}`}>
+                      <button key={t} onClick={()=>setNewSubType(t)}
+                        className={`px-2.5 py-1.5 transition-colors ${newSubType===t ? (t==="labor"?"bg-blue-500 text-white":"bg-amber-500 text-white") : "bg-white text-gray-500 hover:bg-gray-50"}`}>
                         {t==="labor"?"L":"M"}
                       </button>
                     ))}
                   </div>
-                  <button onClick={addCat} className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors">Add</button>
+                  <button onClick={addSubAsm} className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold rounded-lg transition-colors">Add</button>
                 </div>
-                {customCategories.length === 0 ? (
-                  <p className="text-xs text-gray-400">No custom categories yet.</p>
-                ) : (
-                  <div className="flex flex-wrap gap-2">
-                    {customCategories.map(c => (
-                      <span key={c.name} className="flex items-center gap-1 bg-gray-100 text-gray-700 text-xs font-medium pl-2.5 pr-1.5 py-1 rounded-full">
-                        {c.name}
-                        <button onClick={()=>toggleCatType(c)}
-                          title={`Click to toggle: currently ${c.costType}`}
-                          className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full transition-colors ${c.costType==="labor"?"bg-blue-100 text-blue-700 hover:bg-blue-200":"bg-amber-100 text-amber-700 hover:bg-amber-200"}`}>
-                          {c.costType==="labor"?"L":"M"}
-                        </button>
-                        <button onClick={()=>delCat(c)} className="text-gray-400 hover:text-red-400 transition-colors ml-0.5">×</button>
-                      </span>
-                    ))}
-                  </div>
-                )}
+
+                {/* Add master group row */}
+                <div className="mt-2 flex gap-2 items-center">
+                  <input value={newGrpName} onChange={e=>setNewGrpName(e.target.value)} placeholder="New master group name…"
+                    onKeyDown={e=>{if(e.key==="Enter")addGroup();}}
+                    className={INP + " flex-1"}/>
+                  <button onClick={addGroup} className="px-3 py-1.5 bg-gray-700 hover:bg-gray-900 text-white text-xs font-semibold rounded-lg transition-colors">Add Group</button>
+                </div>
               </section>
 
-              {/* Sub-Assembly Configuration */}
+              {/* ── Section 2: Default Pricing Reference ── */}
               <section>
-                <h3 className="text-sm font-bold text-gray-800 mb-1">Sub-Assembly Configuration</h3>
-                <p className="text-xs text-gray-400 mb-3">Rename or reassign sub-assemblies to different master groups. Changes apply across all views.</p>
-                <div className="max-h-80 overflow-y-auto rounded-xl border border-gray-200">
+                <h3 className="text-sm font-bold text-gray-800 mb-0.5">Default Pricing Reference</h3>
+                <p className="text-xs text-gray-400 mb-3">Click any row to edit rates. Changes apply globally across all projects.</p>
+                <div className="max-h-72 overflow-y-auto rounded-xl border border-gray-200">
                   <table className="w-full text-xs" style={{tableLayout:"fixed"}}>
-                    <thead className="sticky top-0 bg-gray-50 border-b border-gray-200">
+                    <thead className="sticky top-0 bg-gray-50 border-b border-gray-200 z-10">
                       <tr>
-                        <th className={SH + " px-3 py-2 text-left w-2/5"}>Sub-Assembly</th>
-                        <th className={SH + " px-3 py-2 text-left w-1/4"}>Master Group</th>
-                        <th className={SH + " px-3 py-2 text-left w-1/6"}>Type</th>
-                        <th className="px-3 py-2 w-12"></th>
+                        <th className={SH + " px-3 py-2 text-left"} style={{width:"38%"}}>Item</th>
+                        <th className={SH + " px-3 py-2 text-left"} style={{width:"18%"}}>Category</th>
+                        <th className={SH + " px-3 py-2 text-right"} style={{width:"12%"}}>Unit</th>
+                        <th className={SH + " px-3 py-2 text-right"} style={{width:"13%"}}>Low</th>
+                        <th className={SH + " px-3 py-2 text-right"} style={{width:"13%"}}>Mid</th>
+                        <th className={SH + " px-3 py-2 text-right"} style={{width:"13%"}}>High</th>
+                        <th style={{width:"28px"}}></th>
                       </tr>
                     </thead>
                     <tbody>
-                      {GROUPS.map(grp => {
-                        const grpAsms = DB.assemblies.filter(a => (asmOverrides[a.id]?.group ?? a.group) === grp);
-                        if (grpAsms.length === 0) return null;
-                        return [
-                          <tr key={`hdr_${grp}`} className="bg-gray-50 border-t border-gray-200">
-                            <td colSpan={4} className="px-3 py-1.5">
-                              <span className={`text-[10px] font-bold uppercase tracking-widest px-2 py-0.5 rounded-full ${GROUP_COLOR[grp]}`}>{grp}</span>
+                      {Object.entries(DB.rates).map(([k,r]) => {
+                        const ov = globalRateOverrides[k] || {};
+                        const isEditing = editingRateKey === k;
+                        const isOverridden = !!globalRateOverrides[k];
+                        const effLow = ov.low ?? r.low;
+                        const effMid = ov.mid ?? r.mid;
+                        const effHigh = ov.high ?? r.high;
+                        return (
+                          <tr key={k} onClick={()=>!isEditing && startEditRate(k,r)}
+                            className={`border-t border-gray-100 cursor-pointer ${isEditing?"bg-blue-50":"hover:bg-gray-50"} group/raterow`}>
+                            <td className="px-3 py-1.5 text-gray-700 truncate font-medium">
+                              {r.label}{isOverridden && <span className="ml-1 text-[9px] text-blue-400">(edited)</span>}
                             </td>
-                          </tr>,
-                          ...grpAsms.map(a => {
-                            const effName  = asmOverrides[a.id]?.name  ?? a.name;
-                            const effGroup = asmOverrides[a.id]?.group ?? a.group;
-                            const isOverridden = !!asmOverrides[a.id];
-                            const isEditing = editingAsmId === a.id;
-                            const hasMaterial = a.lineItems.some(li => li.customItem);
-                            return (
-                              <tr key={a.id} className="border-t border-gray-100 hover:bg-gray-50 group/asmrow">
-                                <td className="px-3 py-2">
-                                  {isEditing ? (
-                                    <input value={editingAsmVals.name} onChange={e=>setEditingAsmVals(v=>({...v,name:e.target.value}))}
-                                      className="w-full px-2 py-1 border border-blue-400 rounded text-xs focus:outline-none"
-                                      onKeyDown={e=>{if(e.key==="Enter")saveEditAsm(a.id,a.name,a.group);if(e.key==="Escape")setEditingAsmId(null);}}/>
-                                  ) : (
-                                    <span className={`font-medium ${isOverridden?"text-blue-700":"text-gray-800"}`}>
-                                      {effName}
-                                      {isOverridden && <span className="ml-1 text-[9px] text-blue-400">(edited)</span>}
-                                    </span>
-                                  )}
+                            <td className="px-3 py-1.5 text-gray-400 truncate">{r.category}</td>
+                            <td className="px-3 py-1.5 text-gray-400 text-right">{r.unit}</td>
+                            {isEditing ? (
+                              <>
+                                <td className="px-1 py-1"><input value={editingRateVals.low} onChange={e=>setEditingRateVals(v=>({...v,low:e.target.value}))} className={INP_SM} type="number" min="0" step="0.01"/></td>
+                                <td className="px-1 py-1"><input value={editingRateVals.mid} onChange={e=>setEditingRateVals(v=>({...v,mid:e.target.value}))} className={INP_SM + " font-semibold"} type="number" min="0" step="0.01"/></td>
+                                <td className="px-1 py-1"><input value={editingRateVals.high} onChange={e=>setEditingRateVals(v=>({...v,high:e.target.value}))} className={INP_SM} type="number" min="0" step="0.01"
+                                  onKeyDown={e=>{if(e.key==="Enter")saveEditRate(k);if(e.key==="Escape")setEditingRateKey(null);}}/></td>
+                                <td className="px-1 py-1">
+                                  <button onClick={e=>{e.stopPropagation();saveEditRate(k);}} className="text-blue-500 hover:text-blue-700 font-bold text-[10px]">✓</button>
                                 </td>
-                                <td className="px-3 py-2">
-                                  {isEditing ? (
-                                    <select value={editingAsmVals.group} onChange={e=>setEditingAsmVals(v=>({...v,group:e.target.value}))}
-                                      className="w-full px-1.5 py-1 border border-blue-400 rounded text-xs bg-white focus:outline-none">
-                                      {GROUPS.map(g=><option key={g} value={g}>{g}</option>)}
-                                    </select>
-                                  ) : (
-                                    <span className={`text-gray-500 ${isOverridden&&asmOverrides[a.id]?.group?"text-blue-600 font-medium":""}`}>{effGroup}</span>
-                                  )}
+                              </>
+                            ) : (
+                              <>
+                                <td className={`px-3 py-1.5 text-right tabular-nums ${isOverridden&&ov.low!==undefined?"text-blue-600 font-medium":"text-gray-500"}`}>{fmtUSD2(effLow)}</td>
+                                <td className={`px-3 py-1.5 text-right tabular-nums font-semibold ${isOverridden&&ov.mid!==undefined?"text-blue-700":"text-blue-700"}`}>{fmtUSD2(effMid)}</td>
+                                <td className={`px-3 py-1.5 text-right tabular-nums ${isOverridden&&ov.high!==undefined?"text-blue-600 font-medium":"text-gray-500"}`}>{fmtUSD2(effHigh)}</td>
+                                <td className="px-1 py-1 text-right">
+                                  {isOverridden && <button onClick={e=>{e.stopPropagation();resetRate(k);}} className="text-gray-300 hover:text-amber-500 opacity-0 group-hover/raterow:opacity-100 transition-opacity"><IconReset c="w-3 h-3"/></button>}
                                 </td>
-                                <td className="px-3 py-2">
-                                  <span className={`px-1.5 py-0.5 rounded-full text-[10px] font-semibold ${hasMaterial?"bg-amber-100 text-amber-700":"bg-blue-100 text-blue-700"}`}>
-                                    {hasMaterial?"Material":"Labor"}
-                                  </span>
-                                </td>
-                                <td className="px-3 py-2 text-right">
-                                  {isEditing ? (
-                                    <div className="flex gap-1 justify-end">
-                                      <button onClick={()=>saveEditAsm(a.id,a.name,a.group)} className="text-blue-500 hover:text-blue-700 font-bold text-[10px]">Save</button>
-                                      <button onClick={()=>setEditingAsmId(null)} className="text-gray-400 hover:text-gray-600 text-[10px]">Cancel</button>
-                                    </div>
-                                  ) : (
-                                    <div className="flex gap-1 justify-end opacity-0 group-hover/asmrow:opacity-100 transition-opacity">
-                                      <button onClick={()=>startEditAsm(a.id, effName, effGroup)} className="text-gray-400 hover:text-blue-500"><IconEdit c="w-3 h-3"/></button>
-                                      {isOverridden && <button onClick={()=>resetAsmOverride(a.id)} title="Reset to default" className="text-gray-300 hover:text-amber-500"><IconReset c="w-3 h-3"/></button>}
-                                    </div>
-                                  )}
-                                </td>
-                              </tr>
-                            );
-                          })
-                        ];
+                              </>
+                            )}
+                          </tr>
+                        );
                       })}
-                    </tbody>
-                  </table>
-                </div>
-              </section>
-
-              {/* Default Pricing Reference */}
-              <section>
-                <h3 className="text-sm font-bold text-gray-800 mb-1">Default Pricing Reference</h3>
-                <p className="text-xs text-gray-400 mb-4">Rate database used for estimates. Mid pricing is the default.</p>
-                <div className="max-h-64 overflow-y-auto rounded-xl border border-gray-200">
-                  <table className="w-full text-xs" style={{tableLayout:"fixed"}}>
-                    <thead className="sticky top-0 bg-gray-50 border-b border-gray-200">
-                      <tr>
-                        {["Item","Category","Unit","Low","Mid","High"].map(h=><th key={h} className={SH + " px-3 py-2 text-left"}>{h}</th>)}
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {Object.entries(DB.rates).map(([k,r])=>(
-                        <tr key={k} className="border-t border-gray-100 hover:bg-gray-50">
-                          <td className="px-3 py-1.5 text-gray-700 truncate">{r.label}</td>
-                          <td className="px-3 py-1.5 text-gray-400 truncate">{r.category}</td>
-                          <td className="px-3 py-1.5 text-gray-400">{r.unit}</td>
-                          <td className="px-3 py-1.5 text-gray-500 tabular-nums">{fmtUSD2(r.low)}</td>
-                          <td className="px-3 py-1.5 text-blue-700 font-semibold tabular-nums">{fmtUSD2(r.mid)}</td>
-                          <td className="px-3 py-1.5 text-gray-500 tabular-nums">{fmtUSD2(r.high)}</td>
-                        </tr>
-                      ))}
                     </tbody>
                   </table>
                 </div>
@@ -2193,10 +2233,11 @@
         const tier = proj.settings?.pricingTier ?? "mid";
         const projCustomAsms = config?.customAssemblies ?? [];
         const projAsmOverrides = config?.asmOverrides ?? {};
+        const projGlobalRateOverrides = config?.globalRateOverrides ?? {};
         const asmBudget = (proj.instances ?? []).flatMap(inst => {
           const def = getEffectiveDef(inst.assemblyId, projCustomAsms, projAsmOverrides);
           if (!def) return [];
-          return computeLineItems(def, inst.inputs, tier, proj.rateOverrides ?? {}, proj.costTypeOverrides ?? {});
+          return computeLineItems(def, inst.inputs, tier, proj.rateOverrides ?? {}, proj.costTypeOverrides ?? {}, projGlobalRateOverrides);
         }).reduce((s, li) => s + li.total, 0);
         const procBudget = getProcurementLineItems(proj.procurement ?? []).reduce((s, li) => s + li.total, 0);
         const budget = asmBudget + procBudget;
@@ -2380,8 +2421,9 @@
       const [activeView,  setActiveView]  = useState("estimate"); // "estimate" | "tracker" | "plan" | "procurement"
 
       const customAssemblies = config?.customAssemblies ?? [];
-      const customCategories = config?.customCategories ?? [];
       const asmOverrides = config?.asmOverrides ?? {};
+      const globalRateOverrides = config?.globalRateOverrides ?? {};
+      const effectiveGroups = getEffectiveGroups(config);
 
       useEffect(() => {
         onUpdate({ settings, instances, rateOverrides, purchases, catProgress, planData, procurement, costTypeOverrides });
@@ -2400,7 +2442,7 @@
       const printEstimate = () => {
         const asmItems = instances.flatMap(inst => {
           const def = getEffectiveDef(inst.assemblyId, customAssemblies, asmOverrides); if(!def) return [];
-          return computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides).map(li => ({...li, asmName: def.name, asmGroup: def.group}));
+          return computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides, globalRateOverrides).map(li => ({...li, asmName: def.name, asmGroup: def.group}));
         });
         const procItems = getProcurementLineItems(procurement).map(li => ({...li, asmName: "Procurement Materials", asmGroup: "Procurement"}));
         const allItems = [...asmItems, ...procItems];
@@ -2420,7 +2462,7 @@
         const asmMap = {};
         instances.forEach(inst => {
           const def = getEffectiveDef(inst.assemblyId, customAssemblies, asmOverrides); if(!def) return;
-          const items = computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides);
+          const items = computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides, globalRateOverrides);
           if(!asmMap[inst.id]) asmMap[inst.id] = { name: def.name, group: def.group, items };
         });
         const procLineItems = getProcurementLineItems(procurement);
@@ -2587,7 +2629,7 @@
           {activeView === "estimate" ? (
             /* 3-column layout */
             <div className="flex flex-1 overflow-hidden">
-              <div className="w-56 flex-shrink-0"><AssemblyPalette onAdd={setAddingDef} customAssemblies={customAssemblies} asmOverrides={asmOverrides}/></div>
+              <div className="w-56 flex-shrink-0"><AssemblyPalette onAdd={setAddingDef} customAssemblies={customAssemblies} asmOverrides={asmOverrides} effectiveGroups={effectiveGroups}/></div>
               <div className="flex-1 overflow-y-auto">
                 {instances.length===0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-center px-8 pb-16">
@@ -2609,7 +2651,8 @@
                       customAssemblies.forEach(ca => { const d = applyAsmOverrides(customAsmToDef(ca), asmOverrides); if (d) asmNameToGroup[d.name] = d.group; });
                       const allProcItems = getProcurementLineItems(procurement);
 
-                      const groups = GROUPS.map(group => {
+                      const groups = effectiveGroups.map(grpObj => {
+                        const group = grpObj.id;
                         const grpInstances = instances.filter(inst => {
                           const def = getEffectiveDef(inst.assemblyId, customAssemblies, asmOverrides);
                           return def && def.group === group;
@@ -2619,7 +2662,7 @@
 
                         const asmTotal = grpInstances.reduce((s, inst) => {
                           const def = getEffectiveDef(inst.assemblyId, customAssemblies, asmOverrides); if (!def) return s;
-                          return s + computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides).reduce((ss,li)=>ss+li.total,0);
+                          return s + computeLineItems(def, inst.inputs, tier, rateOverrides, costTypeOverrides, globalRateOverrides).reduce((ss,li)=>ss+li.total,0);
                         }, 0);
                         const grpProcTotal = grpProcItems.reduce((s,i)=>s+i.total,0);
                         const grpTotal = asmTotal + grpProcTotal;
@@ -2631,7 +2674,7 @@
                         return (
                           <div key={group} className="space-y-2">
                             <div className="flex items-center gap-3 px-1 py-1">
-                              <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full ${GROUP_COLOR[group]}`}>{group}</span>
+                              <span className={`text-[10px] font-bold uppercase tracking-widest px-2.5 py-1 rounded-full ${getGroupColor(group, effectiveGroups)}`}>{grpObj.name}</span>
                               <div className="flex-1 h-px bg-gray-200"/>
                               <span className="text-xs font-bold text-gray-500 tabular-nums">{fmtUSD(grpTotal)}</span>
                             </div>
@@ -2639,7 +2682,7 @@
                               {grpInstances.map(inst => {
                                 const def = getEffectiveDef(inst.assemblyId, customAssemblies, asmOverrides); if (!def) return null;
                                 return <AssemblyCard key={inst.id} instance={inst} asmDef={def} tier={tier} rateOverrides={rateOverrides}
-                                  costTypeOverrides={costTypeOverrides}
+                                  costTypeOverrides={costTypeOverrides} globalRateOverrides={globalRateOverrides}
                                   onEdit={inst=>setEditingPair({instance:inst,def})} onRemove={removeAssembly}
                                   onRateOverride={setOverride} onResetRateOverride={resetOverride}
                                   onCostTypeChange={setCostTypeOverride}/>;
@@ -2726,6 +2769,7 @@
               </div>
               <div className="flex-shrink-0" style={{width:"299px"}}>
                 <SummaryPanel instances={instances} tier={tier} rateOverrides={rateOverrides} costTypeOverrides={costTypeOverrides}
+                  globalRateOverrides={globalRateOverrides}
                   settings={settings} onSettingsOpen={()=>setShowSettings(true)} customAssemblies={customAssemblies}
                   procurement={procurement} asmOverrides={asmOverrides}/>
               </div>
@@ -2734,10 +2778,11 @@
             /* Tracker view */
             <div className="flex flex-1 overflow-hidden">
               <TrackerView
-                instances={instances} tier={tier} rateOverrides={rateOverrides} costTypeOverrides={costTypeOverrides} settings={settings}
+                instances={instances} tier={tier} rateOverrides={rateOverrides} costTypeOverrides={costTypeOverrides}
+                globalRateOverrides={globalRateOverrides} settings={settings}
                 purchases={purchases} onAddPurchase={addPurchase} onDeletePurchase={deletePurchase}
                 catProgress={catProgress} onProgressChange={(cat, pct) => setCatProgress(p => ({...p, [cat]: pct}))}
-                customCategories={customCategories} customAssemblies={customAssemblies}
+                customAssemblies={customAssemblies}
                 procurement={procurement} asmOverrides={asmOverrides}/>
             </div>
           ) : activeView === "procurement" ? (
@@ -2746,7 +2791,7 @@
               <ProcurementView
                 procurement={procurement} onProcurementChange={setProcurement}
                 purchases={purchases} onAddPurchase={addPurchase} onDeletePurchase={deletePurchase}
-                planData={planData} customCategories={customCategories} customAssemblies={customAssemblies}
+                planData={planData} customAssemblies={customAssemblies}
                 asmOverrides={asmOverrides}/>
             </div>
           ) : (
