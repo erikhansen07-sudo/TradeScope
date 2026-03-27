@@ -796,11 +796,14 @@
       );
     }
 
-    function AssemblyCard({ instance, asmDef, tier, rateOverrides, costTypeOverrides, globalRateOverrides, onEdit, onRemove, onRateOverride, onResetRateOverride, onCostTypeChange }) {
+    function AssemblyCard({ instance, asmDef, tier, rateOverrides, costTypeOverrides, globalRateOverrides, onEdit, onRemove, onRateOverride, onResetRateOverride, onCostTypeChange, procItems = [] }) {
       const [collapsed, setCollapsed] = useState(false);
       const matMode = instance.materialMode ?? "estimate";
       const lineItems = useMemo(() => computeLineItems(asmDef, instance.inputs, tier, rateOverrides, costTypeOverrides, globalRateOverrides, matMode), [asmDef, instance.inputs, tier, rateOverrides, costTypeOverrides, globalRateOverrides, matMode]);
-      const subtotal = lineItems.reduce((s,i) => s+i.total, 0);
+      const laborTotal = lineItems.reduce((s,i) => s+i.total, 0);
+      const procTotal = procItems.reduce((s,i) => s+i.total, 0);
+      const subtotal = laborTotal + procTotal;
+      const totalItems = lineItems.length + procItems.length;
       const summary = asmDef.inputs.filter(i=>(i.type==="number"||i.type==="percent")&&instance.inputs[i.key]).slice(0,2)
         .map(i=>{ const v=instance.inputs[i.key]; const u=i.key.toLowerCase().includes("feet")?(i.key.includes("linear")?" LF":" SF"):""; return `${i.type==="percent"?(v*100).toFixed(0)+"%":v}${u}`; }).join(" · ");
 
@@ -815,7 +818,7 @@
                 {matMode === "procurement" && <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">mat via procurement</span>}
                 {summary && <span className="text-xs text-gray-400">{summary}</span>}
               </div>
-              <p className="text-[11px] text-gray-400 mt-0.5">{lineItems.length} item{lineItems.length!==1?"s":""}</p>
+              <p className="text-[11px] text-gray-400 mt-0.5">{totalItems} item{totalItems!==1?"s":""}</p>
             </div>
             <div className="text-right flex-shrink-0"><div className="font-bold text-gray-900 text-sm tabular-nums">{fmtUSD(subtotal)}</div></div>
             <div className="flex items-center gap-0.5 ml-1 flex-shrink-0" onClick={e=>e.stopPropagation()}>
@@ -840,6 +843,19 @@
                 </tr></thead>
                 <tbody className="divide-y divide-gray-50">
                   {lineItems.map(item => <LineItemRow key={item.id} item={item} onOverride={onRateOverride} onReset={onResetRateOverride} onCostTypeChange={onCostTypeChange}/>)}
+                  {procItems.length > 0 && <>
+                    <tr className="bg-amber-50/60 border-t border-amber-100">
+                      <td colSpan={4} className="py-1.5 pl-5 pr-3 text-[10px] font-bold uppercase tracking-widest text-amber-600">Procurement</td>
+                    </tr>
+                    {procItems.map(item => (
+                      <tr key={item.id} className="hover:bg-amber-50/30">
+                        <td className="py-2 pl-5 pr-3 text-sm text-gray-800">{item.label}</td>
+                        <td className="py-2 px-3 text-sm text-right text-gray-400 tabular-nums">1 LS</td>
+                        <td className="py-2 px-3 text-sm text-right tabular-nums text-gray-500">{fmtUSD2(item.unitCost)}</td>
+                        <td className="py-2 pl-3 pr-5 text-sm text-right font-semibold text-gray-800 tabular-nums">{fmtUSD(item.total)}</td>
+                      </tr>
+                    ))}
+                  </>}
                 </tbody>
                 <tfoot><tr className="border-t border-gray-200 bg-gray-50/50">
                   <td colSpan={3} className="py-2.5 pl-5 pr-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Assembly Subtotal</td>
@@ -2782,18 +2798,24 @@
                               <span className="text-xs font-bold text-gray-500 tabular-nums">{fmtUSD(grpTotal)}</span>
                             </div>
                             <div className="space-y-2 pl-2">
-                              {orderedNames.map(asmName => (
-                                <div key={asmName} className="space-y-1.5">
-                                  {(instancesByName[asmName]||[]).map(({inst, def}) => (
-                                    <AssemblyCard key={inst.id} instance={inst} asmDef={def} tier={tier} rateOverrides={rateOverrides}
-                                      costTypeOverrides={costTypeOverrides} globalRateOverrides={globalRateOverrides}
-                                      onEdit={inst=>setEditingPair({instance:inst,def})} onRemove={removeAssembly}
-                                      onRateOverride={setOverride} onResetRateOverride={resetOverride}
-                                      onCostTypeChange={setCostTypeOverride}/>
-                                  ))}
-                                  {procBySubAsm[asmName] && <ProcCard subAsm={asmName} items={procBySubAsm[asmName]}/>}
-                                </div>
-                              ))}
+                              {orderedNames.map(asmName => {
+                                const insts = instancesByName[asmName] || [];
+                                const pItems = procBySubAsm[asmName] || [];
+                                return (
+                                  <div key={asmName} className="space-y-1.5">
+                                    {insts.map(({inst, def}, idx) => (
+                                      <AssemblyCard key={inst.id} instance={inst} asmDef={def} tier={tier} rateOverrides={rateOverrides}
+                                        costTypeOverrides={costTypeOverrides} globalRateOverrides={globalRateOverrides}
+                                        onEdit={inst=>setEditingPair({instance:inst,def})} onRemove={removeAssembly}
+                                        onRateOverride={setOverride} onResetRateOverride={resetOverride}
+                                        onCostTypeChange={setCostTypeOverride}
+                                        procItems={idx === 0 ? pItems : []}/>
+                                    ))}
+                                    {/* Only show standalone ProcCard when there's no matching assembly instance */}
+                                    {insts.length === 0 && pItems.length > 0 && <ProcCard subAsm={asmName} items={pItems}/>}
+                                  </div>
+                                );
+                              })}
                             </div>
                           </div>
                         );
