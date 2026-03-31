@@ -1426,6 +1426,12 @@
       const projDragRef = React.useRef(null);
       React.useEffect(() => { projDragRef.current = projDrag; }, [projDrag]);
 
+      // Collapsed bar drag — shifts all tasks in a project
+      const [projBarDragLive, setProjBarDragLive] = useState(null); // {projId, deltaDays}
+      const projBarDraggingRef = React.useRef(null); // {projId, startX}
+      const projBarDragLiveRef = React.useRef(null);
+      React.useEffect(() => { projBarDragLiveRef.current = projBarDragLive; }, [projBarDragLive]);
+
       // Refs so document handlers always have fresh data without re-registering
       const draggingRef = React.useRef(null);
       const dragLiveRef = React.useRef(null);
@@ -1519,6 +1525,17 @@
               }
             }
           }
+          // Collapsed bar drag — shift all project tasks
+          const bd = projBarDraggingRef.current;
+          if (bd) {
+            const deltaDays = Math.round((e.clientX - bd.startX) / dayWRef.current);
+            const cur = projBarDragLiveRef.current;
+            if (!cur || cur.deltaDays !== deltaDays) {
+              const next = { projId: bd.projId, deltaDays };
+              projBarDragLiveRef.current = next;
+              setProjBarDragLive(next);
+            }
+          }
         };
 
         const onUp = () => {
@@ -1543,6 +1560,28 @@
           }
           projDragRef.current = null;
           setProjDrag(null);
+
+          // Commit collapsed bar drag — shift all tasks in the project
+          const bd = projBarDraggingRef.current;
+          const bl = projBarDragLiveRef.current;
+          if (bd && bl && bl.deltaDays !== 0) {
+            const pd3 = planDataRef.current;
+            const shiftDate = (dateStr, delta) => {
+              const d = new Date(dateStr + "T00:00:00");
+              d.setDate(d.getDate() + delta);
+              return d.toISOString().split("T")[0];
+            };
+            onPlanChangeRef.current({
+              ...pd3,
+              tasks: pd3.tasks.map(t =>
+                t.projectId === bd.projId && t.startDate
+                  ? { ...t, startDate: shiftDate(t.startDate, bl.deltaDays) }
+                  : t
+              ),
+            });
+          }
+          projBarDraggingRef.current = null;
+          setProjBarDragLive(null);
         };
 
         document.addEventListener("mousemove", onMove);
@@ -1574,6 +1613,15 @@
         const state = { srcIdx: origIdx, overIdx: origIdx };
         projDragRef.current = state;
         setProjDrag(state);
+      };
+
+      const startProjBarDrag = (e, projId) => {
+        e.preventDefault();
+        e.stopPropagation();
+        projBarDraggingRef.current = { projId, startX: e.clientX };
+        const init = { projId, deltaDays: 0 };
+        projBarDragLiveRef.current = init;
+        setProjBarDragLive(init);
       };
       // ───────────────────────────────────────────────────────────────────────
 
@@ -1719,17 +1767,30 @@
                       {/* Project gantt area */}
                       <div className="relative flex-shrink-0 overflow-hidden" style={{width:totalW, background:color+"0d"}}>
                         <DayBg/>
-                        {isCol && sumStart !== null && (
-                          <div className="absolute rounded flex items-center px-1.5"
-                            style={{
-                              top:"50%", transform:"translateY(-50%)", height:18,
-                              left: sumStart*dayW,
-                              width: Math.max(dayW, (sumEnd-sumStart)*dayW),
-                              background: color, opacity: 0.75
-                            }}>
-                            <span className="text-[9px] font-bold text-white truncate">{projTasks.length} task{projTasks.length!==1?"s":""}</span>
-                          </div>
-                        )}
+                        {isCol && sumStart !== null && (() => {
+                          const isBarDragging = projBarDragLive && projBarDragLive.projId === proj.id;
+                          const offset = isBarDragging ? projBarDragLive.deltaDays : 0;
+                          return (
+                            <div
+                              className="absolute rounded flex items-center px-1.5 select-none"
+                              onMouseDown={e => startProjBarDrag(e, proj.id)}
+                              style={{
+                                top:"50%", transform:"translateY(-50%)", height:18,
+                                left: (sumStart + offset) * dayW,
+                                width: Math.max(dayW, (sumEnd - sumStart) * dayW),
+                                background: color,
+                                opacity: isBarDragging ? 1 : 0.75,
+                                cursor: "grab",
+                                zIndex: isBarDragging ? 20 : 1,
+                                boxShadow: isBarDragging ? "0 4px 14px rgba(0,0,0,0.3)" : "none",
+                                transition: isBarDragging ? "none" : "box-shadow 0.15s",
+                              }}>
+                              <span className="text-[9px] font-bold text-white truncate pointer-events-none">
+                                {offset !== 0 ? `${offset > 0 ? "+" : ""}${offset}d · ` : ""}{projTasks.length} task{projTasks.length!==1?"s":""}
+                              </span>
+                            </div>
+                          );
+                        })()}
                       </div>
                     </div>
 
